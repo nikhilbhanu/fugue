@@ -1,23 +1,206 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>fugue.fm</title>
-  <style>
-    html, body { height: 100%; margin: 0; }
-    body {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-      background: #0a0a0a;
-      color: #fafafa;
-    }
-    h1 { font-weight: 300; letter-spacing: 0.05em; }
-  </style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>fugue.fm — a live-coded DSP language in the browser</title>
+  <meta
+    name="description"
+    content="fugue is a live-coded DSP language that runs in your browser and plays a song while you edit it."
+  />
+  <link rel="canonical" href="https://fugue.fm/" />
+  <meta name="theme-color" content="#ece6d4" />
+  <meta name="color-scheme" content="light dark" />
+  <link
+    rel="icon"
+    type="image/svg+xml"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23ece6d4'/%3E%3Ctext x='6' y='25' font-family='Georgia,serif' font-style='italic' font-weight='700' font-size='26' fill='%23141414'%3Ef%3C/text%3E%3Ccircle cx='22' cy='22' r='3' fill='%23ff551d'/%3E%3C/svg%3E"
+  />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="fugue.fm — a live-coded DSP language" />
+  <meta property="og:description" content="fugue is a live-coded DSP language that runs in your browser and plays a song while you edit it." />
+  <meta property="og:url" content="https://fugue.fm/" />
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="fugue.fm — a live-coded DSP language" />
+  <meta name="twitter:description" content="fugue is a live-coded DSP language that runs in your browser and plays a song while you edit it." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="preconnect" href="https://esm.sh" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&family=Caveat:wght@400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
+  <link rel="stylesheet" href="./style.css" />
 </head>
-<body>
-  <h1>fugue.fm</h1>
+<body class="theme-light">
+<div class="page">
+
+  <!-- ───────────────────────────── CHROME ───────────────────────────── -->
+  <header class="chrome">
+    <div class="brand">
+      <span class="wordmark">fugue<span class="dot"></span><span class="tld">fm</span></span>
+      <span class="plate">
+        <span class="pill" id="version-pill">—</span>
+        <span>live-coded dsp</span>
+      </span>
+    </div>
+    <div></div>
+    <div class="controls">
+      <button class="tbtn play idle" id="play" title="play / pause">
+        <span class="glyph" id="play-glyph">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <polygon points="3,2 12,7 3,12" fill="currentColor"/>
+          </svg>
+        </span>
+        <span id="play-label">Play</span>
+      </button>
+      <button class="tbtn" id="stop" title="stop">
+        <span class="glyph">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <rect x="3" y="3" width="8" height="8" fill="currentColor"/>
+          </svg>
+        </span>
+        Stop
+      </button>
+      <div class="master-strip">
+        <div class="row">
+          <span class="lbl">Master</span>
+          <span class="val" id="master-db">−∞ dB</span>
+        </div>
+        <div class="vu" id="topbar-vu"><div class="rms"></div><div class="peak"></div></div>
+      </div>
+    </div>
+    <div class="theme-toggle" title="Theme">
+      <button class="on" id="theme-light" title="Light">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <circle cx="7" cy="7" r="2.6" fill="currentColor"/>
+          <g stroke="currentColor" stroke-width="1.1" stroke-linecap="round">
+            <line x1="7" y1="0.5" x2="7" y2="2.4"/>
+            <line x1="7" y1="11.6" x2="7" y2="13.5"/>
+            <line x1="0.5" y1="7" x2="2.4" y2="7"/>
+            <line x1="11.6" y1="7" x2="13.5" y2="7"/>
+            <line x1="2.4" y1="2.4" x2="3.7" y2="3.7"/>
+            <line x1="10.3" y1="10.3" x2="11.6" y2="11.6"/>
+            <line x1="2.4" y1="11.6" x2="3.7" y2="10.3"/>
+            <line x1="10.3" y1="3.7" x2="11.6" y2="2.4"/>
+          </g>
+        </svg>
+      </button>
+      <button id="theme-dark" title="Dark">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M 10 2.5 A 5 5 0 1 0 11.5 9 A 4 4 0 0 1 10 2.5 Z" fill="currentColor"/>
+        </svg>
+      </button>
+    </div>
+    <div class="accents" id="accents" title="Accent">
+      <button class="accent-dot on" data-color="#ff551d" style="background:#ff551d" title="orange"></button>
+      <button class="accent-dot" data-color="#0a2bd6" style="background:#0a2bd6" title="cobalt"></button>
+      <button class="accent-dot" data-color="#6ea800" style="background:#6ea800" title="lime"></button>
+      <button class="accent-dot" data-color="#ff2a85" style="background:#ff2a85" title="hot pink"></button>
+    </div>
+    <button class="zen-btn" id="zen-btn" title="Zen mode (Esc to exit)">
+      <span class="glyph">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+          <path d="M 2 4 L 5 7 L 8 4" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+        </svg>
+      </span>
+      Zen
+    </button>
+  </header>
+
+  <!-- ───────────────────────────── TABS ───────────────────────────── -->
+  <div class="tabs" id="file-tabs"></div>
+
+  <!-- ───────────────────────────── MAIN ───────────────────────────── -->
+  <main class="main">
+
+    <section class="editor">
+      <div class="editor-head">
+        <div class="label">
+          <span class="num">A</span>
+          <span class="name">Editor</span>
+          <span class="meta" id="editor-meta">hot-swap on ⌘↵</span>
+        </div>
+        <div class="pos" id="editor-pos">—</div>
+      </div>
+      <div class="editor-body" id="editor-body">
+        <div id="editor-mount"></div>
+        <div class="boot-error" id="boot-error" hidden>
+          <div class="boot-error-body">
+            <div class="boot-error-head">engine load failed.</div>
+            <div class="boot-error-msg" id="boot-error-msg">—</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panels-col">
+
+      <article class="panel mixer-panel">
+        <div class="panel-head">
+          <span class="num">01</span>
+          <span class="name">Mixer</span>
+        </div>
+        <div class="panel-body mixer-body" id="channel-list"></div>
+      </article>
+
+      <article class="panel figure-panel">
+        <div class="panel-head">
+          <span class="num">02</span>
+          <div class="fig-tabs" id="fig-tabs">
+            <button class="fig-tab active" data-fig="spectrum">spectrum</button>
+            <button class="fig-tab"        data-fig="scope">scope</button>
+            <!-- patch (block-diagram) tab disabled — re-enable later -->
+            <!-- <button class="fig-tab"        data-fig="diagram">patch</button> -->
+          </div>
+          <div class="right-meta">
+            <div class="spec-ctl" id="spec-ctls">
+              <span class="ctl" id="ctl-integ" title="drag — temporal averaging window"><span class="lbl">integ</span><span class="cv">200<i>ms</i></span></span>
+              <span class="ctl" id="ctl-smooth" title="drag — spectral (frequency-axis) smoothing"><span class="lbl">smooth</span><span class="cv">20<i>%</i></span></span>
+              <span class="ctl" id="ctl-floor" title="drag — display floor"><span class="lbl">floor</span><span class="cv">−96<i>dB</i></span></span>
+            </div>
+            <div class="spec-ctl hidden" id="scope-ctls">
+              <span class="ctl" id="ctl-window" title="drag — scope window (post-trigger)"><span class="lbl">window</span><span class="cv">14.0<i>ms</i></span></span>
+            </div>
+            <button class="hold-btn" id="hold-btn" title="freeze the display">
+              <span class="led"></span> hold
+            </button>
+          </div>
+        </div>
+        <div class="panel-body figure-body">
+          <div class="fig-panel active" data-fig="spectrum" id="fig-spectrum"></div>
+          <div class="fig-panel"        data-fig="scope"    id="fig-scope"></div>
+          <!-- <div class="fig-panel"        data-fig="diagram"  id="fig-diagram"></div> -->
+        </div>
+        <div class="figure-cap">
+          <span id="cap-text"></span>
+        </div>
+      </article>
+
+    </section>
+
+  </main>
+
+  <!-- ───────────────────────────── STATUS ───────────────────────────── -->
+  <footer class="status">
+    <div class="chunk"><span class="lbl">SR</span><span class="val" id="sr-status">— kHz</span></div>
+    <div class="chunk"><span class="lbl">Buf</span><span class="val">128</span></div>
+    <div class="chunk"><span class="lbl">Eng</span>
+      <span class="val idle" id="engine-state"><span class="dot"></span>idle</span>
+    </div>
+    <div class="log"><span class="ts" id="log-ts">—</span><span id="log-msg">press ▶ to listen</span></div>
+    <div class="kbd">eval <kbd>⌘↵</kbd></div>
+  </footer>
+
+</div>
+
+<!--
+  main.js bootstraps the AudioWorklet, mounts CodeMirror 6 (loaded at
+  runtime from esm.sh), and wires the UI to the worklet's postMessage
+  channel. The wasm-bindgen JS entry point is loaded by main.js, not
+  directly. The AudioWorklet processor is a *module* worklet, registered
+  from main.js with `audioWorklet.addModule`.
+-->
+<script type="module" src="./main.js"></script>
 </body>
 </html>

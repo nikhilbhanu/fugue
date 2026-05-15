@@ -1,0 +1,218 @@
+// submerged.fugue — voices from the lake.
+//
+// A deep dub-techno meditation: ambient pads, chord skanks dissolving
+// into long reverb tails, a four-on-the-floor that flips backwards every
+// fourth bar, hats degrading into stutter, a glass lead that palindromes
+// forward and back. Eight voices at 92 BPM, in the lineage of
+// dub-chamber techno and minimal ambient — chord, hush, drone, time —
+// scored through the v0.3 pattern combinators in an algorithmic register
+// so nothing repeats the same way twice. Half the motion is in the
+// cutoffs (sub-Hz LFO sweeps so nothing stands still); half is in the
+// patterns refusing to.
+//
+//   drone — A0 sine + octave, sub-Hz tremolo, always on (the lake itself)
+//   kick  — sub-thump, every(4, rev) — the floor lurches every fourth bar
+//   sub   — A1 saw, LFO-swept ladder, degradeBy thins the offbeats
+//   hat   — noise burst through a high-Q biquad, degrade()'d 16ths
+//   tock  — pitched bell with feedback wobble, chunk(4, rev) stutter
+//   stab  — Am9 dub-chord skank, jux(rev) into a stereo-reversed double
+//   glass — detuned-saw lead through a swept resonant ladder + tanh drive
+//           (the hourglass voice), a palindrome(struct(<>)) phrase
+//   pad   — Am9 slow swell, sallen-key cutoff swept under FDN reverb
+//
+// The score — every `voice.gate` binding — lives at the bottom of the
+// file, after all eight voices are defined: read the instruments first,
+// then the arrangement. All params are sliders; drag any number to bend
+// it live.
+
+@transport 92 bpm
+
+// ── drone — always-on lake bed ───────────────────────────────────────
+@param drone_freq:      Freq = 55Hz  [20Hz, 80Hz]   smooth=30ms taper=log
+@param drone_trem_rate: Freq = 1Hz   [0.01Hz, 1Hz]  smooth=30ms taper=log
+@param drone_trem_dep:  Real = 1.0   [0.0, 1.0]     smooth=30ms
+@param drone_level:     Real = 0.27  [0.0, 0.7]     smooth=20ms
+
+voice drone =
+    let body = osc.sine(drone_freq) + osc.sine(drone_freq * 2.0) * 0.4 in
+    let trem = 1.0 - drone_trem_dep + drone_trem_dep * (0.5 + 0.5 * sine_lfo(drone_trem_rate)) in
+    body * trem * drone_level;
+
+// ── kick ─────────────────────────────────────────────────────────────
+@param kick_freq:   Freq = 55Hz   [40Hz, 200Hz]  smooth=2ms
+@param kick_cutoff: Freq = 136Hz  [50Hz, 800Hz]  smooth=2ms
+@param kick_decay:  Time = 108ms
+@param kick_drive:  Real = 2.4    [0.5, 4.0]     smooth=5ms
+@param kick_level:  Real = 0.57   [0.0, 1.0]     smooth=5ms
+@param kick_gate:   Bool = 0
+
+voice kick = drum.kick(kick_freq, kick_cutoff, kick_decay, kick_drive, kick_gate) * kick_level;
+
+// ── sub — LFO-swept A1 ───────────────────────────────────────────────
+@param sub_freq:       Freq = 55Hz   [30Hz, 200Hz]   smooth=5ms
+@param sub_cutoff:     Freq = 185Hz  [60Hz, 1.0kHz]  smooth=5ms  taper=log
+@param sub_sweep:      Real = 0.95   [0.0, 0.95]     smooth=20ms
+@param sub_sweep_rate: Freq = 2Hz    [0.02Hz, 2Hz]   smooth=20ms taper=log
+@param sub_q:          Real = 0.53   [0.1, 1.0]      smooth=10ms
+@param sub_attack:     Time = 177ms
+@param sub_release:    Time = 1.84s
+@param sub_level:      Real = 0.67   [0.0, 1.0]      smooth=5ms
+@param sub_gate:       Bool = 0
+
+voice sub =
+    let cut = sub_cutoff + sub_cutoff * sub_sweep * sine_lfo(sub_sweep_rate) in
+    synth.sawbass(sub_freq, cut, sub_q, sub_attack, sub_release, sub_gate) * sub_level;
+
+// ── hat — degraded offbeat 16ths ─────────────────────────────────────
+@param hat_attack:  Time = 2ms
+@param hat_release: Time = 1.1s    [50ms, 2000ms]
+@param hat_tone:    Freq = 2970Hz  [1kHz, 12kHz]  smooth=10ms taper=log
+@param hat_q:       Real = 1.4     [0.4, 4.0]     smooth=10ms
+@param hat_level:   Real = 0.39    [0.0, 0.5]     smooth=5ms
+@param hat_gate:    Bool = 0
+
+voice hat =
+    let env   = adsr(hat_attack, 50.0ms, 0.0, hat_release, hat_gate) in
+    let burst = noise_white(7) * env in
+    let toned = burst |> biquad(hat_tone, hat_q) in
+    toned * hat_level;
+
+// ── tock — 3-against-4 pitched bell with feedback wobble ─────────────
+@param tock_tone:     Freq = 752Hz   [400Hz, 4kHz]  smooth=5ms  taper=log
+@param tock_q:        Real = 6.0     [0.5, 8.0]     smooth=10ms
+@param tock_attack:   Time = 20ms
+@param tock_release:  Time = 22ms
+@param tock_echo:     Time = 40ms    [40ms, 500ms]  smooth=10ms
+@param tock_fb:       Real = 0.20    [0.0, 0.82]    smooth=10ms
+@param tock_mod_rate: Freq = 2.5Hz   [0.05Hz, 4Hz]  smooth=20ms taper=log
+@param tock_mod_dep:  Time = 19ms    [0ms, 25ms]    smooth=10ms
+@param tock_wet:      Real = 0.61    [0.0, 1.0]     smooth=10ms
+@param tock_level:    Real = 0.057   [0.0, 0.8]     smooth=5ms
+@param tock_gate:     Bool = 0
+
+voice tock =
+    let env   = ar(tock_attack, tock_release, tock_gate) in
+    let burst = pink_noise(23) * env in
+    let toned = burst |> biquad(tock_tone, tock_q) in
+    let drift = modulated_delay(toned, tock_echo, tock_mod_dep, tock_mod_rate) in
+    let echo  = delay_fb(drift, tock_echo, tock_fb) in
+    (toned * (1.0 - tock_wet) + echo * tock_wet) * tock_level;
+
+// ── stab — Am9 dub-chord skank ───────────────────────────────────────
+@param stab_fc_base: Freq = 720Hz   [200Hz, 1.2kHz]  smooth=5ms  taper=log
+@param stab_fc_peak: Freq = 2.6kHz  [500Hz, 4kHz]    smooth=5ms  taper=log
+@param stab_q:       Real = 0.62    [0.2, 1.0]       smooth=10ms
+@param stab_env_a:   Time = 620ms
+@param stab_env_r:   Time = 580ms
+@param stab_amp_a:   Time = 250ms
+@param stab_amp_r:   Time = 436ms
+@param stab_echo:    Time = 800ms   [80ms, 800ms]    smooth=15ms
+@param stab_fb:      Real = 0.63    [0.0, 0.82]      smooth=15ms
+@param stab_wet:     Real = 0.55    [0.0, 1.0]       smooth=10ms
+@param stab_level:   Real = 0.22    [0.0, 1.0]       smooth=5ms
+@param stab_gate:    Bool = 0
+
+voice stab =
+    // rootless Am9: C4 / E4 / G4 / B4 — the sub owns the A
+    let v1 = saw_blep(262Hz) in
+    let v2 = saw_blep(330Hz) in
+    let v3 = saw_blep(392Hz) in
+    let v4 = saw_blep(494Hz) in
+    let chord  = (v1 + v2 + v3 + v4) * 0.15 in
+    let fc_env = ar(stab_env_a, stab_env_r, stab_gate) in
+    let fc_mod = stab_fc_base + (stab_fc_peak - stab_fc_base) * fc_env in
+    let filt   = chord |> ladder(fc_mod, stab_q) in
+    let amp    = ar(stab_amp_a, stab_amp_r, stab_gate) in
+    let dry    = filt * amp in
+    let echo   = delay_fb(dry, stab_echo, stab_fb) in
+    (dry * (1.0 - stab_wet) + echo * stab_wet) * stab_level;
+
+// ── glass — the hourglass lead: detuned saws → swept ladder → drive ──
+@param glass_freq:       Freq = 220Hz   [110Hz, 880Hz]  smooth=8ms  taper=log
+@param glass_detune:     Real = 0.011   [0.0, 0.05]     smooth=20ms
+@param glass_cutoff:     Freq = 1.2kHz  [300Hz, 6kHz]   smooth=10ms taper=log
+@param glass_sweep:      Real = 0.55    [0.0, 0.95]     smooth=20ms
+@param glass_sweep_rate: Freq = 0.21Hz  [0.02Hz, 4Hz]   smooth=20ms taper=log
+@param glass_q:          Real = 0.72    [0.0, 1.0]      smooth=10ms
+@param glass_drive:      Real = 2.1     [0.5, 8.0]      smooth=20ms
+@param glass_attack:     Time = 14ms
+@param glass_decay:      Time = 220ms
+@param glass_sustain:    Real = 0.45    [0.0, 1.0]
+@param glass_release:    Time = 540ms
+@param glass_level:      Real = 0.16    [0.0, 0.7]      smooth=5ms
+@param glass_gate:       Bool = 0
+
+voice glass =
+    // two PolyBLEP saws, slightly detuned — the hourglass-stress voice
+    // condensed to a mono lead.
+    let osc_a = saw_blep(glass_freq * (1.0 - glass_detune)) in
+    let osc_b = saw_blep(glass_freq * (1.0 + glass_detune)) in
+    let pair  = (osc_a + osc_b) * 0.5 in
+    let env   = adsr(glass_attack, glass_decay, glass_sustain, glass_release, glass_gate) in
+    let cut   = glass_cutoff * (1.0 + glass_sweep * sine_lfo(glass_sweep_rate)) in
+    let filt  = (pair * env) |> ladder(cut, glass_q) in
+    let dry   = filt |> tanh_drive(glass_drive) in
+    dry * glass_level;
+
+// ── pad — Am9 slow swell into FDN ────────────────────────────────────
+@param pad_cutoff:     Freq = 720Hz   [300Hz, 2kHz]    smooth=30ms taper=log
+@param pad_sweep:      Real = 0.46    [0.0, 0.9]       smooth=30ms
+@param pad_sweep_rate: Freq = 0.06Hz  [0.01Hz, 0.5Hz]  smooth=30ms taper=log
+@param pad_q:          Real = 0.75    [0.3, 1.4]       smooth=20ms
+@param pad_attack:     Time = 1.8s
+@param pad_decay:      Time = 181ms
+@param pad_sustain:    Real = 2.0     [0.0, 4.0]
+@param pad_release:    Time = 2.4s
+@param pad_room:       Real = 2.0     [0.5, 2.0]       smooth=30ms
+@param pad_damp:       Freq = 3.2kHz  [400Hz, 8kHz]    smooth=30ms taper=log
+@param pad_fb:         Real = 0.55    [0.0, 0.96]      smooth=20ms
+@param pad_wet:        Real = 0.82    [0.0, 0.9]       smooth=20ms
+@param pad_level:      Real = 0.20    [0.0, 0.8]       smooth=10ms
+@param pad_gate:       Bool = 1
+
+voice pad =
+    // rootless Am9 one octave below the stab: C3 / E3 / G3 / B3
+    let p1 = saw_blep(131Hz) in
+    let p2 = saw_blep(165Hz) in
+    let p3 = saw_blep(196Hz) in
+    let p4 = saw_blep(247Hz) in
+    let chord = (p1 + p2 + p3 + p4) * 0.15 in
+    let cut   = pad_cutoff + pad_cutoff * pad_sweep * sine_lfo(pad_sweep_rate) in
+    let filt  = chord |> sallen_key_lp(cut, pad_q) in
+    let env   = adsr(pad_attack, pad_decay, pad_sustain, pad_release, pad_gate) in
+    let dry   = filt * env in
+    let rev   = fdn8(dry, pad_room, pad_damp, pad_fb) in
+    (dry * (1.0 - pad_wet) + rev * pad_wet) * pad_level;
+
+// ─────────────────────────────────────────────────────────────────────
+// The score — algorithmic-pattern combinators.
+//
+// Every binding is a mini-notation string; the v0.3 surface lets a
+// `name(...)` call wrap a pattern in a combinator, in the live-coded /
+// algorithmic-music idiom. The full set is exercised end-to-end:
+// every, rev, degradeBy, degrade, chunk, jux, palindrome, and
+// struct(<>).
+//
+// drone and pad take no binding — they are the always-on harmonic bed
+// (pad_gate defaults to 1, so its ADSR rests at sustain for the whole
+// piece; drone has no gate at all).
+// ─────────────────────────────────────────────────────────────────────
+
+// kick — four-ish on the floor, but every fourth bar runs backwards.
+kick.gate  = "every(4, rev, 1 ~ ~ ~ 1 ~ ~ 1 1 ~ ~ 1 1 ~ 1 ~)";
+
+// sub — half-time pulses with offbeat lift, 18% of hits randomly dropped.
+sub.gate   = "degradeBy(0.18, 1 ~ ~ ~ ~ ~ 1 ~ 1 ~ ~ ~ ~ ~ 1 ~)";
+
+// hat — straight 16ths, degrade()'d to a ~50% stutter cloud.
+hat.gate   = "1 ~ 1 ~ 1 ~ ~ ~ 1 ~ ~ ~ 1 1 ~ ~";
+
+// tock — 3-against-4 bell; chunk(4, rev) reverses one quarter per bar.
+tock.gate  = "chunk(4, rev, ~ ~ 1 ~ ~ ~ 1 ~ ~ 1 ~ ~ ~ 1 ~ ~)";
+
+// stab — the classic 2-and-4 skank, jux(rev) layering its own reverse.
+stab.gate  = "jux(rev, ~ ~ ~ ~ 1 ~ ~ ~ ~ ~ ~ ~ 1 ~ ~ ~)";
+
+// glass — a struct'd phrase whose value-grid alternates per cycle, the
+// whole thing palindromed (forward bars, reversed bars).
+glass.gate = "palindrome(struct(1 ~ 1 1 ~ 1 ~ ~, <1 ~ 1> 1 ~ 1 1 ~ 1 ~))";
