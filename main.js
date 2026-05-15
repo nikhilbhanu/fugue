@@ -169,10 +169,47 @@ async function paintVersionPill() {
   }
 }
 
+// iOS-silent-switch unlock — the silent <audio> trick. Builds a ~50 ms
+// silent WAV blob on first call, plays it on loop. The element doesn't
+// connect anywhere audible; its only job is to keep an HTMLMediaElement
+// in the "playing" state, which forces Safari's audio session category
+// to "playback" instead of the default "ambient" that respects the
+// silent switch. Harmless on desktop / Android — just a looping silent
+// element with zero CPU cost.
+let silentUnlockEl = null;
+function unlockIosAudioSession() {
+  if (silentUnlockEl) {
+    silentUnlockEl.play().catch(() => {});
+    return;
+  }
+  const sr = 22050, frames = Math.floor(sr / 20); // ~50 ms
+  const buf = new ArrayBuffer(44 + frames);
+  const dv = new DataView(buf);
+  const tag = (off, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i)); };
+  tag(0, "RIFF"); dv.setUint32(4, 36 + frames, true); tag(8, "WAVE");
+  tag(12, "fmt "); dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);  // PCM, mono
+  dv.setUint32(24, sr, true); dv.setUint32(28, sr, true); // sr, byte rate
+  dv.setUint16(32, 1, true); dv.setUint16(34, 8, true);   // block align, 8-bit
+  tag(36, "data"); dv.setUint32(40, frames, true);
+  for (let i = 0; i < frames; i++) dv.setUint8(44 + i, 0x80); // 8-bit PCM silence
+  const url = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+  silentUnlockEl = new Audio(url);
+  silentUnlockEl.loop = true;
+  silentUnlockEl.playsInline = true;
+  silentUnlockEl.play().catch(() => {});
+}
+
 async function start() {
   if (audioCtx) return;
   store.set({ engineState: "loading" });
   setEngineState("loading", "idle");
+  // iOS Safari mutes Web Audio when the hardware silent switch is on
+  // (its audio session defaults to "ambient"). An HTMLMediaElement that
+  // is actively playing — even silently — elevates the session to
+  // "playback", which bypasses the switch. Must be started inside the
+  // click handler's user-gesture token; loops for the page's lifetime.
+  unlockIosAudioSession();
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   // iOS WebKit (Safari + Chrome on iOS) creates AudioContext suspended and
   // only honours resume() while the user-gesture token is still live —
