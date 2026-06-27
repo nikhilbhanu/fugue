@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>fugue.fm — a live-coded DSP language in the browser</title>
+  <title>fugue.fm — live-coded DSP with patterns</title>
   <meta
     name="description"
-    content="fugue is a live-coded DSP language that runs in your browser and plays a song while you edit it."
+    content="Live-coded DSP with patterns — runs in your browser and plays a song while you edit it."
   />
   <link rel="canonical" href="https://fugue.fm/" />
   <meta name="theme-color" content="#ece6d4" />
@@ -17,12 +17,17 @@
     href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23ece6d4'/%3E%3Ctext x='6' y='25' font-family='Georgia,serif' font-style='italic' font-weight='700' font-size='26' fill='%23141414'%3Ef%3C/text%3E%3Ccircle cx='22' cy='22' r='3' fill='%23ff551d'/%3E%3C/svg%3E"
   />
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="fugue.fm — a live-coded DSP language" />
-  <meta property="og:description" content="fugue is a live-coded DSP language that runs in your browser and plays a song while you edit it." />
+  <meta property="og:title" content="fugue.fm — live-coded DSP with patterns" />
+  <meta property="og:description" content="Live-coded DSP with patterns — runs in your browser and plays a song while you edit it." />
   <meta property="og:url" content="https://fugue.fm/" />
-  <meta name="twitter:card" content="summary" />
-  <meta name="twitter:title" content="fugue.fm — a live-coded DSP language" />
-  <meta name="twitter:description" content="fugue is a live-coded DSP language that runs in your browser and plays a song while you edit it." />
+  <meta property="og:image" content="https://fugue.fm/og.png" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="fugue.fm — saw(note) |> ladder(cut) |> piping into a waveform" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://fugue.fm/og.png" />
+  <meta name="twitter:title" content="fugue.fm — live-coded DSP with patterns" />
+  <meta name="twitter:description" content="Live-coded DSP with patterns — runs in your browser and plays a song while you edit it." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="preconnect" href="https://esm.sh" crossorigin />
@@ -38,37 +43,62 @@
   <!-- ───────────────────────────── CHROME ───────────────────────────── -->
   <header class="chrome">
     <div class="brand">
-      <span class="wordmark">fugue<span class="dot"></span><span class="tld">fm</span></span>
+      <span class="wordmark" id="wordmark" title="About fugue">fugue<span class="dot"></span><span class="tld">fm</span><span class="about-cue" id="about-cue">about</span></span>
       <span class="plate">
-        <span class="pill" id="version-pill">—</span>
-        <span>live-coded dsp</span>
+        <button class="pill cold" id="version-pill" title="About fugue"><span class="pver" id="version-text">—</span></button>
+        <span>live-coded DSP with patterns</span>
       </span>
     </div>
-    <div></div>
-    <div class="controls">
-      <button class="tbtn play idle" id="play" title="play / pause">
+    <div class="spacer"></div>
+    <!-- Transport: play · stop · record · share, icon-only. Record isn't
+         greyed — clicking it opens a length menu (1–32 bars); picking a
+         length bounces the current patch to a downloadable WAV (offline,
+         deterministic, a whole number of cycles so it loops — see bounceToWav
+         in main.js). -->
+    <div class="cluster">
+      <button class="tbtn play idle" id="play" title="Play">
         <span class="glyph" id="play-glyph">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <svg width="15" height="15" viewBox="0 0 14 14" fill="none">
             <polygon points="3,2 12,7 3,12" fill="currentColor"/>
           </svg>
         </span>
-        <span id="play-label">Play</span>
       </button>
-      <button class="tbtn" id="stop" title="stop">
+      <button class="tbtn" id="stop" title="Stop">
         <span class="glyph">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <svg width="15" height="15" viewBox="0 0 14 14" fill="none">
             <rect x="3" y="3" width="8" height="8" fill="currentColor"/>
           </svg>
         </span>
-        Stop
       </button>
-      <div class="master-strip">
-        <div class="row">
-          <span class="lbl">Master</span>
-          <span class="val" id="master-db">−∞ dB</span>
+      <div class="rec-wrap">
+        <button class="tbtn rec" id="rec" title="Bounce a WAV — pick a length" aria-haspopup="menu">
+          <span class="glyph">
+            <svg width="15" height="15" viewBox="0 0 14 14" fill="none">
+              <circle cx="7" cy="7" r="4.4" fill="currentColor"/>
+            </svg>
+          </span>
+        </button>
+        <div class="rec-menu" id="rec-menu" role="menu" aria-label="Bounce length" hidden>
+          <span class="rec-menu-cap">bounce wav</span>
+          <button type="button" data-bars="1" role="menuitem">1 bar</button>
+          <button type="button" data-bars="2" role="menuitem">2 bars</button>
+          <button type="button" data-bars="4" role="menuitem">4 bars</button>
+          <button type="button" data-bars="8" role="menuitem">8 bars</button>
+          <button type="button" data-bars="16" role="menuitem">16 bars</button>
+          <button type="button" data-bars="32" role="menuitem">32 bars</button>
         </div>
-        <div class="vu" id="topbar-vu"><div class="rms"></div><div class="peak"></div></div>
       </div>
+      <button class="tbtn" id="share" title="Copy a shareable link to this patch">
+        <span class="glyph">
+          <svg width="15" height="15" viewBox="0 0 14 14" fill="none">
+            <circle cx="3.4" cy="7" r="1.7" fill="currentColor"/>
+            <circle cx="10.6" cy="3.2" r="1.7" fill="currentColor"/>
+            <circle cx="10.6" cy="10.8" r="1.7" fill="currentColor"/>
+            <line x1="4.9" y1="6.2" x2="9.1" y2="4" stroke="currentColor" stroke-width="1.1"/>
+            <line x1="4.9" y1="7.8" x2="9.1" y2="10" stroke="currentColor" stroke-width="1.1"/>
+          </svg>
+        </span>
+      </button>
     </div>
     <div class="theme-toggle" title="Theme">
       <button class="on" id="theme-light" title="Light">
@@ -97,6 +127,28 @@
       <button class="accent-dot" data-color="#0a2bd6" style="background:#0a2bd6" title="cobalt"></button>
       <button class="accent-dot" data-color="#6ea800" style="background:#6ea800" title="lime"></button>
       <button class="accent-dot" data-color="#ff2a85" style="background:#ff2a85" title="hot pink"></button>
+    </div>
+    <!-- Docs pair: Learn (guided primer) + Ref (lookup drawer). -->
+    <div class="docs">
+      <button class="cheat-btn" id="learn-btn" title="Learn — the Fugue primer">
+        <span class="glyph">
+          <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+            <path d="M2 3.2 C2 2.6 2.5 2.3 3.2 2.4 L6.4 3 V12 L3.2 11.4 C2.5 11.3 2 11 2 10.4 Z" stroke="currentColor" stroke-width="1.1"/>
+            <path d="M12 3.2 C12 2.6 11.5 2.3 10.8 2.4 L7.6 3 V12 L10.8 11.4 C11.5 11.3 12 11 12 10.4 Z" stroke="currentColor" stroke-width="1.1"/>
+          </svg>
+        </span>
+        Learn
+      </button>
+      <button class="cheat-btn" id="cheat-btn" title="Cheatsheet">
+        <span class="glyph">
+          <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+            <line x1="1.5" y1="2.5" x2="9.5" y2="2.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            <line x1="1.5" y1="5.5" x2="9.5" y2="5.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            <line x1="1.5" y1="8.5" x2="6.5" y2="8.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+        </span>
+        Ref
+      </button>
     </div>
     <button class="zen-btn" id="zen-btn" title="Zen mode (Esc to exit)">
       <span class="glyph">
@@ -127,7 +179,10 @@
         <div id="editor-mount"></div>
         <div class="boot-error" id="boot-error" hidden>
           <div class="boot-error-body">
-            <div class="boot-error-head">engine load failed.</div>
+            <div class="boot-error-headrow">
+              <div class="boot-error-head" id="boot-error-head">engine load failed</div>
+              <button class="boot-error-collapse" id="boot-error-collapse" title="collapse — re-open from the status bar" aria-label="collapse">×</button>
+            </div>
             <div class="boot-error-msg" id="boot-error-msg">—</div>
           </div>
         </div>
@@ -150,8 +205,6 @@
           <div class="fig-tabs" id="fig-tabs">
             <button class="fig-tab active" data-fig="spectrum">spectrum</button>
             <button class="fig-tab"        data-fig="scope">scope</button>
-            <!-- patch (block-diagram) tab disabled — re-enable later -->
-            <!-- <button class="fig-tab"        data-fig="diagram">patch</button> -->
           </div>
           <div class="right-meta">
             <div class="spec-ctl" id="spec-ctls">
@@ -170,12 +223,34 @@
         <div class="panel-body figure-body">
           <div class="fig-panel active" data-fig="spectrum" id="fig-spectrum"></div>
           <div class="fig-panel"        data-fig="scope"    id="fig-scope"></div>
-          <!-- <div class="fig-panel"        data-fig="diagram"  id="fig-diagram"></div> -->
         </div>
         <div class="figure-cap">
           <span id="cap-text"></span>
         </div>
       </article>
+
+      <!-- Cheatsheet drawer — overlays the panels column; non-modal (editor
+           stays live). Content fetched once from ./cheatsheet.html. -->
+      <aside class="cheat-drawer" id="cheat-drawer" hidden>
+        <div class="cheat-head">
+          <span class="cheat-title">Cheatsheet</span>
+          <div class="cheat-actions">
+            <button class="cheat-copyall" id="cheat-copyall" title="Copy the whole cheatsheet as Markdown — paste into Claude" aria-label="Copy cheatsheet as Markdown">
+              <svg class="ico-copy" width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                <rect x="4.6" y="4.6" width="7.4" height="7.4" rx="1.3" stroke="currentColor" stroke-width="1.2"/>
+                <path d="M9.4 4.6 V3.3 A1.3 1.3 0 0 0 8.1 2 H3.3 A1.3 1.3 0 0 0 2 3.3 V8.1 A1.3 1.3 0 0 0 3.3 9.4 H4.6" stroke="currentColor" stroke-width="1.2"/>
+              </svg>
+              <svg class="ico-done" width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                <path d="M2.5 7.4 L5.6 10.5 L11.5 3.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <button class="cheat-close" id="cheat-close" title="close" aria-label="close">×</button>
+          </div>
+        </div>
+        <div class="cheat-body" id="cheat-body">
+          <div class="cheat-loading">loading…</div>
+        </div>
+      </aside>
 
     </section>
 
@@ -185,13 +260,48 @@
   <footer class="status">
     <div class="chunk"><span class="lbl">SR</span><span class="val" id="sr-status">— kHz</span></div>
     <div class="chunk"><span class="lbl">Buf</span><span class="val">128</span></div>
+    <div class="chunk"><span class="lbl">Load</span><span class="val" id="load-status">—</span></div>
     <div class="chunk"><span class="lbl">Eng</span>
       <span class="val idle" id="engine-state"><span class="dot"></span>idle</span>
     </div>
+    <!-- MIDI is a status-bar I/O chunk (device/connection ledger), never a panel.
+         Connect here; the per-voice arm lives on the mixer strips (docs/midi.md). -->
+    <div class="chunk midi">
+      <button class="midi-toggle idle" id="midi-enable" title="Connect a MIDI keyboard">
+        <span class="lbl">MIDI</span>
+        <span class="val" id="midi-status"><span class="dot"></span>off</span>
+      </button>
+    </div>
     <div class="log"><span class="ts" id="log-ts">—</span><span id="log-msg">press ▶ to listen</span></div>
-    <div class="kbd">eval <kbd>⌘↵</kbd></div>
+    <button class="log-action" id="error-toggle" title="show compile error" aria-label="show compile error" hidden>
+      <svg viewBox="0 0 12 12" fill="none"><path d="M 2.5 8 L 6 4.5 L 9.5 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div class="kbd">hot-swap <kbd>⌘↵</kbd></div>
   </footer>
 
+</div>
+
+<!-- Learn modal — overlay iframe of learn/index.html over the live playground.
+     src is set lazily on first open; the iframe runs its own isolated engine. -->
+<div class="learn-overlay" id="learn-overlay" hidden>
+  <iframe class="learn-frame" id="learn-frame" title="Learn — the Fugue primer" loading="lazy"></iframe>
+</div>
+
+<!-- About modal — opened by the wordmark or the version pill (the two "about" doors). -->
+<div class="about-overlay" id="about-overlay" hidden>
+  <div class="about-card" role="dialog" aria-modal="true" aria-label="About fugue">
+    <button class="about-close" id="about-close" title="Close" aria-label="Close">×</button>
+    <div class="about-mark">fugue<span class="dot"></span><span class="tld">fm</span></div>
+    <div class="about-ver" id="about-version">—</div>
+    <p class="about-blurb">A live-coded language for DSP and patterns — sound and score in one file, right in your browser. Write a patch, hit play, and shape it while it sounds — the engine hot-swaps your edits without dropping a sample.</p>
+    <div class="about-links">
+      <button class="about-link" id="about-learn">Take the primer →</button>
+      <button class="about-link" id="about-ref">Open the reference →</button>
+    </div>
+    <p class="about-ack">fugue grew from one idea — combining Faust's DSP algebra with Tidal's patterns — and it stands on the shoulders of giants: SuperCollider, Strudel, Max/MSP &amp; Pure Data, and many more before them. Thank you.</p>
+    <div class="about-credit">Made by <a href="https://nikhilbhanu.com" target="_blank" rel="noopener">Nikhil Bhanu</a>, aided &amp; abetted by Claude.</div>
+    <div class="about-foot">handmade · audio is the language</div>
+  </div>
 </div>
 
 <!--
@@ -202,5 +312,9 @@
   from main.js with `audioWorklet.addModule`.
 -->
 <script type="module" src="./main.js"></script>
+<!-- Analytics: GoatCounter (fuguefm.goatcounter.com) — no cookies, no
+     consent banner, ignores localhost. -->
+<script data-goatcounter="https://fuguefm.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
 </body>
 </html>

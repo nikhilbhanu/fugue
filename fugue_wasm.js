@@ -28,22 +28,61 @@ export class Engine {
         wasm.__wbg_engine_free(ptr, 0);
     }
     /**
-     * Fill `out` with the active event spans from the most recent
-     * `step_block`, one `[start, end]` u32 pair per voice in voice
-     * order. `(0, 0)` means no event is active for that voice (rest or
-     * unbound). `out` must be at least `voice_count() * 2` long; a
-     * shorter slice is filled as far as it reaches. Mirrors the
-     * `voice_levels` fill-buffer pattern — no allocation on our side.
+     * Fill `out` with the active mini-notation spans from the most recent
+     * `step_block` as a flat, packed list of `[start, end]` u32 pairs — one
+     * per atom sounding at the block's first sample, across all voices (a
+     * voiced chord-name lights once; simultaneous voices each contribute).
+     * Returns the number of u32s written (`pairs * 2`); the tail of `out` is
+     * left untouched. No allocation on our side — mirrors the `voice_levels`
+     * fill-buffer pattern.
      *
-     * The playground pre-allocates one `Uint32Array` and passes it
-     * here on every meter tap (~62 Hz). Each non-zero pair is an
-     * absolute `.fugue` byte range that CodeMirror highlights.
+     * The playground pre-allocates one `Uint32Array` sized to
+     * `active_spans_capacity()` and passes it here on every meter tap (~62 Hz),
+     * then reads back the returned length. Each pair is an absolute `.fugue`
+     * byte range that CodeMirror highlights.
      * @param {Uint32Array} out
+     * @returns {number}
      */
     active_spans(out) {
         var ptr0 = passArray32ToWasm0(out, wasm.__wbindgen_malloc);
         var len0 = WASM_VECTOR_LEN;
-        wasm.engine_active_spans(this.__wbg_ptr, ptr0, len0, out);
+        const ret = wasm.engine_active_spans(this.__wbg_ptr, ptr0, len0, out);
+        return ret >>> 0;
+    }
+    /**
+     * Upper bound on the u32s `active_spans` can write this build — the
+     * playground sizes its tap buffer to this so the fill is never truncated.
+     * @returns {number}
+     */
+    active_spans_capacity() {
+        const ret = wasm.engine_active_spans_capacity(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Panic / all-notes-off.
+     */
+    all_notes_off() {
+        wasm.engine_all_notes_off(this.__wbg_ptr);
+    }
+    /**
+     * Arm voice `i` for the live keyboard, or `-1` to disarm. `midi_only`
+     * selects the mode: `false` = override (pattern plays, live preempts while
+     * held), `true` = MIDI-only (pattern muted whenever armed). Exclusive:
+     * arming one voice disarms any other. Non-armable / out-of-range disarms.
+     * @param {number} voice
+     * @param {boolean} midi_only
+     */
+    arm(voice, midi_only) {
+        wasm.engine_arm(this.__wbg_ptr, voice, midi_only);
+    }
+    /**
+     * Whether voice `i` can take live input (drives a note/trig process).
+     * @param {number} i
+     * @returns {boolean}
+     */
+    armable(i) {
+        const ret = wasm.engine_armable(this.__wbg_ptr, i);
+        return ret !== 0;
     }
     /**
      * Build the successor engine for a hot-swap **without installing it**.
@@ -100,6 +139,32 @@ export class Engine {
         return ret >>> 0;
     }
     /**
+     * Migrate DSP state from the engine `self` succeeds — call once, at
+     * swap-commit, with the outgoing engine, just before dropping it. Moves
+     * matched node state (reverb tails, oscillator phase, held poly notes, LFO
+     * phase + the sample clock) from `old` into `self` using the plan stashed by
+     * [`Engine::build_successor`]. A no-op on an engine that wasn't built as a
+     * successor (`swap` is `None`). Called only on the structural (hard-cut)
+     * path; a non-structural swap fades and never applies its plan. `old` is
+     * left holding `self`'s prior default state; the caller drops it right after
+     * (the worklet's `commitPending`).
+     *
+     * The migration loop ([`ArrangementEngine::apply_migration`]) is itself
+     * alloc/drop-free (a `mem::swap` per node) — that is what keeps the **native**
+     * rtsan-gated path clean. The `take()` here drops the spent plan (a short
+     * `Vec` of node-id pairs); on the wasm worklet that drop lands on the audio
+     * thread, but it is co-located with — and dwarfed by — the outgoing engine's
+     * own drop in the same `commitPending`, both part of the worklet swap's
+     * already-accepted allocation cost (moving the whole swap off-thread is the
+     * shared-memory follow-up, processor.js). It is never on the native audio
+     * callback.
+     * @param {Engine} old
+     */
+    migrate_from(old) {
+        _assertClass(old, Engine);
+        wasm.engine_migrate_from(this.__wbg_ptr, old.__wbg_ptr);
+    }
+    /**
      * Parse `source` as a `.fugue` patch, lower to IR, build an engine
      * at `sample_rate` Hz. Returns the engine on success, or a JS error
      * carrying the compiler diagnostics on failure.
@@ -118,12 +183,148 @@ export class Engine {
         return this;
     }
     /**
+     * Live note-off.
+     * @param {number} pitch
+     */
+    note_off(pitch) {
+        wasm.engine_note_off(this.__wbg_ptr, pitch);
+    }
+    /**
+     * Live note-on (mono last-note; poly allocates a pool voice).
+     * @param {number} pitch
+     */
+    note_on(pitch) {
+        wasm.engine_note_on(this.__wbg_ptr, pitch);
+    }
+    /**
      * Number of audio outputs the active patch produces per frame.
      * @returns {number}
      */
     output_arity() {
         const ret = wasm.engine_output_arity(this.__wbg_ptr);
         return ret >>> 0;
+    }
+    /**
+     * Number of declared `@param`s in the active patch. Stable until
+     * the next `hot_swap`. The playground enumerates these on every
+     * (re)build to render one slider per param.
+     * @returns {number}
+     */
+    param_count() {
+        const ret = wasm.engine_param_count(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Declared default for param `i`. `None` past the end.
+     * @param {number} i
+     * @returns {number | undefined}
+     */
+    param_default(i) {
+        const ret = wasm.engine_param_default(this.__wbg_ptr, i);
+        return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
+    }
+    /**
+     * Whether param `i` has a declared `[lo, hi]` range. Without one
+     * the playground synthesises `[0, 2·default]` so the slider still
+     * has throw.
+     * @param {number} i
+     * @returns {boolean}
+     */
+    param_has_range(i) {
+        const ret = wasm.engine_param_has_range(this.__wbg_ptr, i);
+        return ret !== 0;
+    }
+    /**
+     * Declared upper bound for param `i`. Returns the default if no
+     * range is declared — pair with `param_has_range` to disambiguate.
+     * @param {number} i
+     * @returns {number | undefined}
+     */
+    param_hi(i) {
+        const ret = wasm.engine_param_hi(this.__wbg_ptr, i);
+        return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
+    }
+    /**
+     * Kind tag for param `i`: `"real"`, `"bool"`, or `"quantity"`.
+     * `None` past the end. Real / Quantity params get a slider; Bool
+     * params get a checkbox (or no widget — the playground decides).
+     * @param {number} i
+     * @returns {string | undefined}
+     */
+    param_kind(i) {
+        const ret = wasm.engine_param_kind(this.__wbg_ptr, i);
+        let v1;
+        if (ret[0] !== 0) {
+            v1 = getStringFromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
+    }
+    /**
+     * Declared lower bound for param `i`. Returns the default if no
+     * range is declared — pair with `param_has_range` to disambiguate.
+     * @param {number} i
+     * @returns {number | undefined}
+     */
+    param_lo(i) {
+        const ret = wasm.engine_param_lo(this.__wbg_ptr, i);
+        return ret === Number.MAX_SAFE_INTEGER ? undefined : ret;
+    }
+    /**
+     * Name of param `i`, or `None` past the end. Declaration order —
+     * the same order the source's `@param` lines appear.
+     * @param {number} i
+     * @returns {string | undefined}
+     */
+    param_name(i) {
+        const ret = wasm.engine_param_name(this.__wbg_ptr, i);
+        let v1;
+        if (ret[0] !== 0) {
+            v1 = getStringFromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
+    }
+    /**
+     * Taper tag for param `i`: `"linear"`, `"log"`, or `"exp"`. UI
+     * surfaces with a log taper map the slider's `[0, 1]` fraction
+     * through `lo·(hi/lo)^f`; linear is `lo + f·(hi-lo)`.
+     * @param {number} i
+     * @returns {string | undefined}
+     */
+    param_taper(i) {
+        const ret = wasm.engine_param_taper(this.__wbg_ptr, i);
+        let v1;
+        if (ret[0] !== 0) {
+            v1 = getStringFromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
+    }
+    /**
+     * Unit string for a `Quantity`-typed param (e.g. `"Hz"`, `"s"`),
+     * or an empty string for `Real` / `Bool`. `None` past the end.
+     * @param {number} i
+     * @returns {string | undefined}
+     */
+    param_unit(i) {
+        const ret = wasm.engine_param_unit(this.__wbg_ptr, i);
+        let v1;
+        if (ret[0] !== 0) {
+            v1 = getStringFromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v1;
+    }
+    /**
+     * Samples per cycle (= per bar) at the active patch's `tempo`. The
+     * playground's WAV bounce renders `bars · samples_per_cycle` frames so
+     * the export is a whole number of cycles and loops seamlessly.
+     * @returns {number}
+     */
+    samples_per_cycle() {
+        const ret = wasm.engine_samples_per_cycle(this.__wbg_ptr);
+        return ret;
     }
     /**
      * Set a smoothed/plain parameter by name. Equivalent to
@@ -186,6 +387,18 @@ export class Engine {
         wasm.engine_step_block(this.__wbg_ptr, ptr0, len0, out);
     }
     /**
+     * Whether the pending swap is structural (every node carries; nothing added
+     * or removed) — the all-`matched` "retune" case. The worklet hard-cuts when
+     * true (migrated state makes the cut click-free) and keeps the one-block
+     * equal-power fade otherwise (it masks the unavoidable step). `false` for a
+     * non-successor engine.
+     * @returns {boolean}
+     */
+    swap_is_structural() {
+        const ret = wasm.engine_swap_is_structural(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
      * Number of voices in the active arrangement. The playground builds
      * one mixer strip per voice; stable until the next `hot_swap`.
      * @returns {number}
@@ -231,7 +444,7 @@ if (Symbol.dispose) Engine.prototype[Symbol.dispose] = Engine.prototype.free;
 /**
  * Workspace semver string baked at compile time. The playground reads
  * this on boot to render the header version pill — single source of
- * truth so the `play.fugue.dev` chrome can't drift from the shipping
+ * truth so the `fugue.fm` chrome can't drift from the shipping
  * library.
  * @returns {string}
  */
@@ -279,6 +492,12 @@ function __wbg_get_imports() {
 const EngineFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_engine_free(ptr, 1));
+
+function _assertClass(instance, klass) {
+    if (!(instance instanceof klass)) {
+        throw new Error(`expected instance of ${klass.name}`);
+    }
+}
 
 function getArrayU8FromWasm0(ptr, len) {
     ptr = ptr >>> 0;

@@ -1,0 +1,120 @@
+// undertow.fugue — a lush downtempo-jazz vamp.
+//
+// A slow i–v in Bb minor (Bbm9 → Fm7): an e-piano comp swims through a phaser
+// into a long room, a sidechained bass holds the roots, busy degrading hats and
+// a masked ride keep time, and an FM lead breathes under two slow filter sweeps
+// before trailing off into delay and reverb.
+//
+// It's all one connected graph — a single kick ducks both the bass and the
+// room, three slow LFOs breathe the two filters and the FM depth, and the
+// e-piano and lead share one reverb. Read the instruments, then the score.
+
+tempo  = 106bpm
+motion = lfo(0.05Hz)             // slow breath — e-piano cutoff
+sweep  = lfo(0.04Hz)             // slower still — lead cutoff
+drift  = lfo(0.06Hz)             // lead FM depth
+
+ridefill = "<0 0 1 1>"           // ride rests for the first half of the phrase
+hatfill  = "<1 1 1 0>"           // hats breathe out every fourth bar
+
+// ── drums ───────────────────────────────────────────────────────────────
+process kick(trig)  { out = kick(48Hz, 105Hz, 160ms, 2.4, trig) * adsr(0.1ms, 250ms, 0.05, 300ms, trig) * 0.6 }
+process rim(trig) {
+    cut = param.log(1.2kHz, 3.5kHz) 2.2kHz |> smooth(10ms)
+    out = (noise(31) |> bpf(cut, 3.0)) * adsr(0.5ms, 32ms, 0.0, 6ms, trig) * 0.3
+}
+process snare(trig) {
+    cut = param.log(800Hz, 3kHz) 1.8kHz |> smooth(15ms)
+    out = (noise(7) |> bpf(cut, 1.1)) * adsr(1ms, 140ms, 0.0, 12ms, trig) * 0.24
+}
+process ride(trig) {
+    cut = param.log(3kHz, 8kHz) 6.5kHz |> smooth(20ms)
+    out = (noise(21) |> bpf(cut, 0.8)) * adsr(2ms, 220ms, 0.0, 280ms, trig) * 0.1
+}
+
+process hat(trig) {
+    tone = param.log(6kHz, 13kHz) 9kHz |> smooth(8ms)
+    out  = (noise(13) |> bpf(tone, 0.6)) * adsr(1ms, 60ms, 0.0, 5ms, trig) * 0.13
+}
+
+// ── e-piano — the harmony: six poly voices, swept lpf into a slow phaser ──
+process epiano(note, trig) voices 6 {
+    cut  = param.log(300Hz, 4kHz) 900Hz |> smooth(40ms)
+    tone = saw(note) |> lpf(cut, 0.5)
+    wide = tone |> phaser(0.08Hz, 0.8, 4)
+    out  = wide * adsr(18ms, 600ms, 0.55, 900ms, trig) * 0.09
+}
+
+// ── bass — root of the i/v, ladder + drive, sidechain-ducked by the kick ──
+process bass(note, trig, duck: audio) {
+    cut  = param.log(60Hz, 800Hz) 220Hz |> smooth(12ms)
+    body = square(note) + sine(note*1.4978) |> ladder(cut, 0.4) |> tanh(1.6)
+    out  = body * adsr(28ms, 200ms, 0.45, 300ms, trig) * (1.0 - 0.7 * env_follow(duck, 18ms)) * 0.18
+}
+
+// ── lead — FM saw, swept resonant ladder + a little drive (shape) ─────────
+process lead(note, trig) {
+    cut  = param.log(400Hz, 6kHz) 1.6kHz |> smooth(10ms)
+    fm   = param.lin(0Hz, 60Hz) 0Hz |> smooth(40ms)
+    rel = param.lin(100ms, 1000ms) 358ms
+    sus = param.lin(0.0, 1.0) 0.0
+    bend = sine(note * 2.0) * fm                       // FM shimmer, depth set from the score
+    body = saw_naive(note + bend) |> ladder(cut, 0.72) |> tanh(1.4)
+    out  = body * adsr(80ms, 200ms, sus, rel, trig) * 0.075
+}
+
+// ── space — the shared room (fdn8), sidechained by the kick like the bass ──
+process space(in: audio, duck: audio) {
+    out = (in |> fdn8(2.2, 3.2kHz, 0.74)) * (1.0 - 0.45 * env_follow(duck, 24ms)) * 0.45
+}
+
+// ── echo — the lead's delay throw (.delay(.25)) ───────────────────────────
+process echo(in: audio) {
+    out = (in |> delay_fb(300ms, 0.45)) * 0.35
+}
+
+// ── score — `source [|> combinators] -> target` ───────────────────────────
+// drums — kick first beat doubles on alternate bars; hats degrade ~half
+"<1 [1 1]> ~ ~ 1 ~ ~ 1 ~"                  -> kick
+"~ ~ 1 ~ ~ ~ 1 ~"       |> every(4, fast(2))        |> palindrome                   -> rim
+"~ ~ 1 ~"                                  -> snare
+"1*16" |> degrade                          -> hat
+"~ ~ 1 ~"  |> fast(4)                      -> ride
+
+// hat colour steps each bar
+"<8000 11000 9000 12000>"                  -> hat.tone
+
+// harmony — Bb minor; the comp strikes Bbm9 then Fm7 (beats 1 & 3) voiced into
+// the poly pool, the bass walks the two roots an octave down, the lead floats
+// the shared chord tones
+"<Bbm9 [Cm9 Fm7]>? ~" |> voicing |> every(2, fast(2))                                -> epiano
+"0 ~ ~ 3 4 ~ ~ 6" |> scale("Bb:minor") |> octave(-1)  |> fast(2) |> degrade_by(0.5)                     -> bass
+"<[8 ~ 11 ~ 6 ~ 8 ~] [11 ~ 8 ~ 10 ~ 6 ~]> 0 1 4" |> scale("Bb:minor") |> every(2, fast(4)) -> lead
+
+// modulation — three slow LFOs: two filters + FM depth
+700Hz  + motion*450Hz                      -> epiano.cut
+1200Hz + sweep*1000Hz                      -> lead.cut
+10Hz   + drift*22Hz                        -> lead.fm
+
+// sidechain — one kick ducks the bass and the reverb tail
+kick                                       -> bass.duck
+kick                                       -> space.duck
+
+// sends — e-piano and lead share the room; the lead also throws to delay;
+// the snare gets a touch of the same room on the backbeat
+epiano                                     -> space
+lead                                       -> space
+lead                                       -> echo
+snare                                      -> space
+
+// to the speakers — pan places the parts; the ride is masked to its phrase
+kick                                       -> out
+rim    |> pan(0.25)                        -> out
+snare                                      -> out
+hat    |> pan(0.3)                         -> out
+ride * ridefill                            -> out
+bass                                       -> out
+epiano |> pan(-0.12)                       -> out
+lead   |> pan(0.18)                        -> out
+echo   |> pan(-0.22)                       -> out
+space                                      -> out

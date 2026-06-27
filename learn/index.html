@@ -1,0 +1,937 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>fugue.fm — Learn</title>
+<!--
+  The Fugue language tutorial, driven by the real engine.
+  Every lesson generates a real .fugue source from its controls and plays it
+  through the WASM interpreter on an AudioWorklet (the same engine the
+  playground runs). The code shown IS the code playing — there is no mock.
+  Lessons 1–8: Beats · Sounds · Basslines · Chords · Melodies · Movement · Arrange · The whole piece.
+
+  Surfaced as a modal inside the playground via an overlay <iframe> (?modal=1):
+  the close button / Esc / footer button post {type:"fugue-learn-close"} to the
+  parent; the parent can post {type:"fugue-learn-stop"} to suspend audio. Loaded
+  directly (no ?modal) it still works standalone — close navigates to ../.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;1,400&family=Caveat:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#ece6d4; --surface:#f5f0de; --surface-2:#e0d9c2; --recess:#cec5a9;
+  --hairline:#b8ad8e; --hairline-2:#d4cbac;
+  --ink:#141414; --ink-2:#4a4640; --ink-3:#7a7361; --ink-4:#a59c82;
+  --signal:#ff551d; --signal-deep:#c93d10; --signal-soft:#ffd0bd; --signal-ink:#141414;
+  --display:'Bricolage Grotesque','Space Grotesk',sans-serif;
+  --sans:'Space Grotesk','Helvetica Neue',Helvetica,Arial,sans-serif;
+  --mono:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace;
+  --hand:'Caveat','Spectral',cursive;
+  /* single-accent: legacy per-lesson accent vars all collapse to --signal,
+     so the existing lesson JS (which sets --rowc to these) needs no edits. */
+  --ember:var(--signal); --teal:var(--signal); --gold:var(--signal);
+  --violet:var(--signal); --rose:var(--signal); --accent:var(--signal);
+}
+/* dark — mirrors the playground's body.theme-dark (style.css). Applied when the
+   parent hands us ?theme=dark (or posts {type:"fugue-theme"}); see the inline
+   theme applier below. The accent (--signal*) is set inline per the picker. */
+body.theme-dark{
+  --paper:#161412; --surface:#221e1a; --surface-2:#2c2823; --recess:#0f0e0c;
+  --hairline:#3a342a; --hairline-2:#2a261f;
+  --ink:#f1e8d4; --ink-2:#b8ad92; --ink-3:#7a7363; --ink-4:#4a4538;
+  --signal-soft:#4a2614;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;}
+body{
+  background:var(--paper);color:var(--ink);font-family:var(--sans);
+  font-feature-settings:"kern" 1,"liga" 1,"tnum" 1;
+  -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;overflow:hidden;
+}
+
+/* ── modal shell ─────────────────────────────────────────────────── */
+.modal{position:fixed;inset:0;display:flex;flex-direction:column;background:var(--paper);overflow:hidden;}
+.m-head{flex:0 0 auto;display:flex;align-items:center;gap:16px;height:54px;padding:0 20px;background:var(--surface);border-bottom:1.5px solid var(--ink);}
+.m-glyph{font-family:var(--display);font-weight:700;font-style:italic;font-size:22px;color:var(--signal);letter-spacing:-.04em;}
+.m-title{font-family:var(--display);font-weight:700;font-style:italic;font-size:22px;letter-spacing:-.02em;}
+.m-sub{font-family:var(--hand);font-size:17px;color:var(--ink-2);margin-left:2px;}
+.m-nav{margin-left:auto;display:flex;align-items:center;gap:7px;}
+.m-nav .pip{font-family:var(--mono);font-size:10px;color:var(--ink-4);width:20px;height:20px;display:grid;place-items:center;border:1px solid var(--hairline-2);cursor:pointer;transition:.12s;}
+.m-nav .pip:hover{color:var(--ink-2);border-color:var(--hairline);}
+.m-nav .pip.on{background:var(--signal);border-color:var(--signal);color:var(--signal-ink);font-weight:700;}
+.m-close{width:30px;height:30px;display:grid;place-items:center;background:none;border:1px solid var(--hairline);color:var(--ink-2);font-size:18px;line-height:1;cursor:pointer;margin-left:6px;transition:.12s;}
+.m-close:hover{border-color:var(--ink);color:var(--ink);}
+@media(max-width:720px){.m-nav{display:none;}}
+
+.m-body{flex:1 1 auto;overflow-y:auto;scroll-behavior:smooth;}
+.m-body::-webkit-scrollbar{width:10px;}
+.m-body::-webkit-scrollbar-thumb{background:var(--recess);border:3px solid var(--paper);border-radius:6px;}
+.wrap{max-width:780px;margin:0 auto;padding:0 36px;}
+
+/* ── hero ────────────────────────────────────────────────────────── */
+.hero{padding:52px 0 30px;border-bottom:1px solid var(--hairline-2);}
+.hero .kick{font-family:var(--mono);font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--signal);margin-bottom:18px;}
+.hero h1{font-family:var(--display);font-weight:700;font-style:italic;font-size:clamp(40px,7vw,68px);line-height:.95;letter-spacing:-.03em;margin-bottom:.32em;}
+.hero h1 .o{color:var(--signal);}
+.hero .lede{font-size:18px;max-width:46ch;color:var(--ink-2);line-height:1.55;}
+.hero .lede b{color:var(--ink);font-weight:600;}
+.hero .meta{margin-top:26px;display:flex;gap:22px;flex-wrap:wrap;font-family:var(--mono);font-size:12px;color:var(--ink-3);}
+.hero .meta span{display:flex;align-items:center;gap:8px;}
+.hero .meta .dot{width:7px;height:7px;border-radius:50%;background:var(--signal);}
+
+/* ── lesson ──────────────────────────────────────────────────────── */
+.lesson{padding:46px 0;border-bottom:1px solid var(--hairline-2);}
+.lesson .num{font-family:var(--mono);font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink-3);}
+.lesson .num b{color:var(--signal);font-weight:600;}
+h2{font-family:var(--display);font-weight:600;font-size:clamp(28px,4.4vw,42px);line-height:1.04;letter-spacing:-.015em;margin:.3em 0 .5em;}
+h2 em{font-style:italic;color:var(--signal);}
+.prose{max-width:60ch;color:var(--ink-2);font-size:16px;line-height:1.62;}
+.prose+.prose{margin-top:.85em;}
+.prose b{color:var(--ink);font-weight:600;}
+.prose code{font-family:var(--mono);font-size:.85em;background:var(--recess);color:var(--ink);padding:.1em .38em;border-radius:3px;}
+
+/* ── instrument rig ──────────────────────────────────────────────── */
+.rig{margin-top:30px;background:var(--surface-2);border:1px solid var(--hairline);padding:22px;}
+.rig-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:20px;}
+.rig-title{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);}
+
+button.play{font-family:var(--sans);font-weight:700;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink);background:var(--paper);border:1.5px solid var(--ink);padding:8px 16px;cursor:pointer;display:flex;align-items:center;gap:9px;transition:.12s;}
+button.play:hover{background:var(--surface);}
+button.play .ico{width:0;height:0;border-style:solid;border-width:5px 0 5px 8px;border-color:transparent transparent transparent var(--ink);}
+button.play.on{background:var(--signal);border-color:var(--signal);color:var(--signal-ink);}
+button.play.on .ico{border:none;width:8px;height:8px;background:var(--signal-ink);}
+
+/* ── step grid ───────────────────────────────────────────────────── */
+.grid-rows{display:flex;flex-direction:column;gap:10px;}
+.grid-row{display:grid;grid-template-columns:80px 1fr;align-items:center;gap:16px;}
+.grid-row .label{font-family:var(--mono);font-size:12px;color:var(--ink-2);display:flex;align-items:center;gap:8px;}
+.grid-row .label .sw{width:8px;height:8px;background:var(--ink);}
+.cells{display:grid;grid-template-columns:repeat(var(--n,8),1fr);gap:6px;}
+.cell{aspect-ratio:1/1.05;background:var(--paper);border:1px solid var(--hairline-2);cursor:pointer;transition:background .1s,border-color .1s,transform .08s;}
+.cell:hover{border-color:var(--signal);}
+.cell.beat{border-left:1.5px solid var(--hairline);}
+.cell.on{background:var(--ink);border-color:var(--ink);}
+.cell.cursor{box-shadow:inset 0 0 0 2px var(--signal);}
+.cell.cursor.on{background:var(--signal);border-color:var(--signal);}
+.cell.flash{animation:flash .35s;}
+@keyframes flash{0%{transform:scale(1.14)}100%{transform:scale(1)}}
+
+/* ── knobs ───────────────────────────────────────────────────────── */
+.knobs{display:flex;gap:26px;flex-wrap:wrap;}
+.knob{display:flex;flex-direction:column;align-items:center;gap:9px;user-select:none;}
+.dial{width:46px;height:46px;position:relative;cursor:ns-resize;border-radius:50%;border:1.4px solid var(--hairline);transition:border-color .12s;}
+.dial:hover{border-color:var(--ink-3);}
+/* Anchor the pointer's base at the exact dial centre. left/top:50% is
+   border-safe (a fixed px top + the 1.4px border-box border put the pivot
+   ~1.4px low); transform-origin:50% 100% pivots at the base so the hand stays
+   radial through the centre dot at every angle. */
+.dial .ind{position:absolute;left:50%;top:50%;width:2px;height:16px;background:var(--ink);border-radius:2px;transform-origin:50% 100%;transform:translate(-50%,-100%) rotate(var(--rot,-135deg));}
+.dial .ctr{position:absolute;inset:0;margin:auto;width:4px;height:4px;border-radius:50%;background:var(--ink);}
+.knob .kname{font-family:var(--sans);font-weight:700;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);text-align:center;}
+.knob .kp{display:block;margin-top:3px;font-family:var(--mono);font-weight:400;font-size:9.5px;letter-spacing:0;text-transform:none;color:var(--ink-2);}
+.knob .kval{font-family:var(--mono);font-size:12px;color:var(--ink);min-height:1em;}
+
+/* ── note pickers (basslines / melodies) ─────────────────────────── */
+.note-row{display:grid;grid-template-columns:80px 1fr;gap:16px;align-items:center;}
+.note-row .label{font-family:var(--mono);font-size:12px;color:var(--ink-2);display:flex;align-items:center;gap:8px;}
+.note-row .label .sw{width:8px;height:8px;background:var(--ink);}
+.steps-note{display:grid;grid-template-columns:repeat(var(--n,8),1fr);gap:6px;}
+.nstep{aspect-ratio:1/1.15;background:var(--paper);border:1px solid var(--hairline-2);cursor:pointer;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:12px;color:var(--ink-3);transition:.12s;}
+.nstep:hover{border-color:var(--signal);color:var(--ink);}
+.nstep.set{background:var(--ink);color:var(--paper);border-color:var(--ink);font-weight:600;}
+.nstep.cursor{box-shadow:inset 0 0 0 2px var(--signal);}
+.nstep.set.cursor{background:var(--signal);border-color:var(--signal);color:var(--signal-ink);}
+
+/* ── chord / transform chips ─────────────────────────────────────── */
+.chips{display:flex;gap:8px;flex-wrap:wrap;}
+.chip{font-family:var(--mono);font-size:12px;padding:7px 13px;background:var(--paper);border:1px solid var(--hairline);color:var(--ink-2);cursor:pointer;transition:.12s;}
+.chip:hover{border-color:var(--signal);color:var(--ink);}
+.chip.sel{background:var(--chip-col,var(--ink));border-color:var(--chip-col,var(--ink));color:var(--paper);font-weight:600;}
+.slot-row{display:flex;gap:22px;flex-wrap:wrap;margin-bottom:20px;}
+.slot{flex:1;min-width:200px;}
+.slabel{font-family:var(--sans);font-weight:700;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);margin-bottom:10px;}
+
+/* ── fugue code card ─────────────────────────────────────────────── */
+.code{margin-top:22px;background:var(--paper);border:1px solid var(--hairline);overflow:hidden;}
+.code .bar{display:flex;align-items:center;gap:7px;padding:8px 14px;background:var(--surface);border-bottom:1px solid var(--hairline-2);}
+.code .bar .d{width:8px;height:8px;border-radius:50%;background:var(--hairline);}
+.code .bar .fn{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-left:6px;}
+.code pre{padding:16px 18px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.75;color:var(--ink);white-space:pre;}
+.code .cmt{color:var(--ink-3);font-style:italic;}
+.code .kw{color:var(--ink);font-weight:700;}
+.code .op{color:var(--ink-2);}
+.code .num{color:var(--ink);font-weight:500;}
+.code .str{color:var(--ink);background:var(--signal-soft);border-radius:2px;padding:.02em 0;}
+
+.tip{font-family:var(--hand);font-size:18px;color:var(--ink-2);margin-top:18px;display:flex;gap:8px;align-items:baseline;}
+.tip::before{content:"›";color:var(--signal);font-family:var(--sans);font-weight:700;}
+
+/* ── footer ──────────────────────────────────────────────────────── */
+.foot{padding:46px 0 60px;}
+.foot .arc{font-family:var(--mono);font-size:12px;color:var(--ink-3);letter-spacing:.04em;line-height:2;}
+.foot .arc b{color:var(--ink-2);}
+.foot h3{font-family:var(--display);font-weight:600;font-style:italic;font-size:30px;letter-spacing:-.02em;margin:14px 0 18px;}
+.foot .back{font-family:var(--sans);font-weight:700;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink);background:var(--signal);border:1.5px solid var(--signal);padding:11px 20px;cursor:pointer;}
+.foot .back:hover{background:var(--signal-deep);border-color:var(--signal-deep);color:#fff;}
+
+@media(max-width:640px){.grid-row,.note-row{grid-template-columns:1fr;}.grid-row .label,.note-row .label{margin-bottom:-4px;}}
+</style>
+</head>
+<body>
+<script>
+/* Theme bridge — the parent playground (main.js) hands us its current theme +
+   accent, either as ?theme=&accent= on first load or via a {type:"fugue-theme"}
+   postMessage on reopen. Classic + inline so it runs during parse, before the
+   modal paints — no light-flash. `s()` mirrors main.js's shadeHex; the
+   theme-aware --signal-soft tint matches applyAccentVars(). */
+window.__fugueTheme = function (theme, accent) {
+  var dark = theme === "dark";
+  document.body.classList.remove("theme-light", "theme-dark");
+  document.body.classList.add(dark ? "theme-dark" : "theme-light");
+  if (accent) {
+    var s = function (hex, amt) {
+      var n = parseInt(hex.replace("#", ""), 16);
+      var r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+      if (amt >= 0) { r += (255 - r) * amt; g += (255 - g) * amt; b += (255 - b) * amt; }
+      else { var a = 1 + amt; r *= a; g *= a; b *= a; }
+      r = Math.round(r); g = Math.round(g); b = Math.round(b);
+      return "#" + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
+    };
+    var st = document.body.style;
+    st.setProperty("--signal", accent);
+    st.setProperty("--signal-deep", s(accent, -0.22));
+    st.setProperty("--signal-soft", s(accent, dark ? -0.72 : 0.6));
+  }
+};
+(function () {
+  var p = new URLSearchParams(location.search);
+  window.__fugueTheme(p.get("theme"), p.get("accent"));
+})();
+</script>
+
+<div class="modal" role="dialog" aria-label="Learn — the Fugue primer">
+  <div class="m-head">
+    <span class="m-glyph">✎</span>
+    <span class="m-title">Learn</span>
+    <span class="m-sub">the Fugue primer · by ear</span>
+    <div class="m-nav" id="nav"></div>
+    <button class="m-close" title="Back to the playground (Esc)">×</button>
+  </div>
+
+  <div class="m-body" id="body">
+    <div class="wrap">
+
+      <!-- HERO -->
+      <section class="hero">
+        <div class="kick">The Fugue Primer · learn by playing</div>
+        <h1>Learn it the<br/>only honest way<span class="o">.</span></h1>
+        <p class="lede">A small language for live-coded music. You <b>design the sound</b>, <b>sequence the patterns</b>, and wire it together — in one file. Every example here is the <b>real engine</b>: the code you see is the code you hear.</p>
+        <div class="meta">
+          <span><span class="dot"></span>8 lessons</span>
+          <span><span class="dot"></span>real sound, in your browser</span>
+          <span><span class="dot"></span>no install</span>
+        </div>
+      </section>
+
+      <!-- ───────────── LESSON 1 — BEATS ───────────── -->
+      <section class="lesson" data-lesson="1">
+        <div class="num">LESSON <b>01</b> · BEATS</div>
+        <h2>A pattern is a <em>string of time.</em></h2>
+        <p class="prose">Type a rhythm between quotes, route it into a drum with <code>-&gt;</code>, and it plays. A <code>1</code> is a hit, a <code>~</code> is a rest. The line reads left to right, exactly like the music: <b>source → instrument → speakers</b>.</p>
+        <p class="prose">Toggle the steps below. The fugue code rewrites itself to match what you hear.</p>
+        <div class="rig">
+          <div class="rig-head">
+            <div class="rig-title">step sequencer · 1 bar</div>
+            <button class="play" id="p1" data-l="beats"><span class="ico"></span>play</button>
+          </div>
+          <div class="grid-rows" id="g1"></div>
+        </div>
+        <div class="code">
+          <div class="bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">beat.fugue</span></div>
+          <pre id="c1"></pre>
+        </div>
+        <div class="tip">Every other step is a beat. Try four-on-the-floor on the kick, offbeats on the hat.</div>
+      </section>
+
+      <!-- ───────────── LESSON 2 — SOUNDS ───────────── -->
+      <section class="lesson" data-lesson="2">
+        <div class="num">LESSON <b>02</b> · SOUNDS</div>
+        <h2>Build an instrument with <em>one pipe.</em></h2>
+        <p class="prose">Drums are processes someone already wrote. Here's how they're made. A <code>process</code> is a signal flowing through functions — the <code>|&gt;</code> pipe sends a raw <code>saw</code> wave through a <b>filter</b> and an <b>envelope</b> until it's an instrument.</p>
+        <p class="prose">The knobs <em>are</em> the parameters in the code. Turn them — hear a buzzy saw become a soft pluck or a screaming lead. This is the part Tidal and Strudel don't have: the sound is yours to shape.</p>
+        <div class="rig">
+          <div class="rig-head">
+            <div class="rig-title">process · tone(note)</div>
+            <button class="play" id="p2"><span class="ico"></span>play</button>
+          </div>
+          <div class="knobs" id="k2"></div>
+          <div class="grid-row" style="margin-top:26px"><div class="label" style="--rowc:var(--teal)"><span class="sw"></span>tone</div><div class="cells" id="g2" style="--n:8"></div></div>
+        </div>
+        <div class="code">
+          <div class="bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">tone.fugue</span></div>
+          <pre id="c2"></pre>
+        </div>
+        <div class="tip">Low cutoff + high resonance = the classic acid squelch. Short decay = a pluck.</div>
+      </section>
+
+      <!-- ───────────── LESSON 3 — BASSLINES ───────────── -->
+      <section class="lesson" data-lesson="3">
+        <div class="num">LESSON <b>03</b> · BASSLINES</div>
+        <h2>Numbers become <em>notes.</em></h2>
+        <p class="prose">Put note names in the pattern instead of <code>1</code>s and route them to a voice — now the same instrument plays pitches. Click a step to cycle it through an <b>A-minor pentatonic</b> scale, or back to a rest.</p>
+        <p class="prose">It's the same <code>-&gt;</code> as the drums. A pattern aimed at a voice's input becomes <b>notes</b>; the voice's job is just to make each one sound.</p>
+        <div class="rig">
+          <div class="rig-head">
+            <div class="rig-title">bass · 1 bar · A minor</div>
+            <button class="play" id="p3"><span class="ico"></span>play</button>
+          </div>
+          <div class="note-row"><div class="label" style="--rowc:var(--violet)"><span class="sw"></span>bass</div><div class="steps-note" id="g3" style="--n:8"></div></div>
+        </div>
+        <div class="code">
+          <div class="bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">bass.fugue</span></div>
+          <pre id="c3"></pre>
+        </div>
+        <div class="tip">Leave gaps. A bassline is as much about the rests as the notes.</div>
+      </section>
+
+      <!-- ───────────── LESSON 4 — CHORDS ───────────── -->
+      <section class="lesson" data-lesson="4">
+        <div class="num">LESSON <b>04</b> · CHORDS</div>
+        <h2>One chord, <em>many voices.</em></h2>
+        <p class="prose">Write a chord by name and Fugue knows its notes. The <code>|&gt;</code> pipe sends it through <code>voicing</code> to spread it nicely, and routing it to a process plays that process <b>once per note at the same time</b> — that's polyphony, for free.</p>
+        <p class="prose">Pick a chord for each half of the bar. The progression loops; the same <code>keys</code> instrument voices all of them.</p>
+        <div class="rig">
+          <div class="rig-head">
+            <div class="rig-title">keys · &lt;chord chord&gt; · 1 per ½ bar</div>
+            <button class="play" id="p4"><span class="ico"></span>play</button>
+          </div>
+          <div class="slot-row">
+            <div class="slot"><div class="slabel">first half</div><div class="chips" data-slot="0" id="ch0"></div></div>
+            <div class="slot"><div class="slabel">second half</div><div class="chips" data-slot="1" id="ch1"></div></div>
+          </div>
+          <div class="grid-row"><div class="label" style="--rowc:var(--rose)"><span class="sw"></span>keys</div><div class="cells" id="g4" style="--n:2"></div></div>
+        </div>
+        <div class="code">
+          <div class="bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">keys.fugue</span></div>
+          <pre id="c4"></pre>
+        </div>
+        <div class="tip">Two minor 7ths a step apart is the whole mood of a dub-techno record.</div>
+      </section>
+
+      <!-- ───────────── LESSON 5 — MELODIES ───────────── -->
+      <section class="lesson" data-lesson="5">
+        <div class="num">LESSON <b>05</b> · MELODIES</div>
+        <h2>Bend a line with <em>combinators.</em></h2>
+        <p class="prose">A melody is just a higher pattern — but outside the quotes you can <b>transform</b> it with <code>|&gt;</code>, the same pipe you used on chords. <code>rev</code> plays it backwards; <code>jux(rev)</code> sends the original to the left ear and a reversed copy to the right; <code>every(4, rev)</code> flips it only on the fourth bar, so it never quite repeats.</p>
+        <p class="prose">Write the notes once. Let the combinator keep them alive.</p>
+        <div class="rig">
+          <div class="rig-head"><div class="rig-title">lead · A-minor pentatonic</div><button class="play" id="p5"><span class="ico"></span>play</button></div>
+          <div class="chips" id="tf5" style="margin-bottom:20px"></div>
+          <div class="note-row"><div class="label" style="--rowc:var(--gold)"><span class="sw"></span>lead</div><div class="steps-note" id="g5" style="--n:8"></div></div>
+        </div>
+        <div class="code"><div class="bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">lead.fugue</span></div><pre id="c5"></pre></div>
+        <div class="tip">Try <b>jux(rev)</b> and listen wide — the same notes, mirrored across the stereo field.</div>
+      </section>
+
+      <!-- ───────────── LESSON 6 — MOVEMENT ───────────── -->
+      <section class="lesson" data-lesson="6">
+        <div class="num">LESSON <b>06</b> · MOVEMENT</div>
+        <h2>Wire one thing <em>into another.</em></h2>
+        <p class="prose">This is the part no pattern language has. The score is a <b>patchbay</b>: any signal can drive any parameter. The <code>kick</code> routed into <code>pad.duck</code> ducks the pad on every hit — sidechain, as one line of wiring. Inside the pad, an <code>lfo</code> breathes the filter <code>cut</code> so it never sits still.</p>
+        <p class="prose">Turn the LFO up. Toggle the sidechain. The pad never stops moving.</p>
+        <div class="rig">
+          <div class="rig-head"><div class="rig-title">pad + kick · routed</div><button class="play" id="p6"><span class="ico"></span>play</button></div>
+          <div class="knobs" id="k6"></div>
+          <div class="chips" id="sc6" style="margin:22px 0 4px"></div>
+          <div class="grid-row" style="margin-top:18px"><div class="label" style="--rowc:var(--ember)"><span class="sw"></span>kick</div><div class="cells" id="g6" style="--n:8"></div></div>
+        </div>
+        <div class="code"><div class="bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">movement.fugue</span></div><pre id="c6"></pre></div>
+        <div class="tip">Slow LFO + deep sidechain = the whole "pumping, evolving" feel of dub techno, from two wires.</div>
+      </section>
+
+      <!-- ───────────── LESSON 7 — ARRANGE ───────────── -->
+      <section class="lesson" data-lesson="7">
+        <div class="num">LESSON <b>07</b> · ARRANGE</div>
+        <h2>A song is a <em>grid of on and off.</em></h2>
+        <p class="prose">Fugue has no "section" keyword — and doesn't need one. Multiply a voice by a slow pattern of <code>1</code>s and <code>0</code>s and it plays only in those bars. The grid below <em>is</em> the arrangement: each row a voice, each column a bar. Toggle cells to bring parts in and out across eight bars.</p>
+        <div class="rig">
+          <div class="rig-head"><div class="rig-title">song grid · 8 bars</div><button class="play" id="p7"><span class="ico"></span>play</button></div>
+          <div class="grid-rows" id="g7"></div>
+        </div>
+        <div class="code"><div class="bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">arrange.fugue</span></div><pre id="c7"></pre></div>
+        <div class="tip">Drop everything but the kick for a bar, then bring it all back. Tension and release, in a grid.</div>
+      </section>
+
+      <!-- ───────────── LESSON 8 — THE WHOLE PIECE ───────────── -->
+      <section class="lesson" data-lesson="8">
+        <div class="num">LESSON <b>08</b> · THE WHOLE PIECE</div>
+        <h2>Every part, <em>at once.</em></h2>
+        <p class="prose">Here is everything you've learned, playing together: a kit, a bassline on the chord roots, voiced chords, a lead, and a sidechained bed — the bones of <code>slipstream</code>, the reference track. It's just the lines from the lessons above, stacked in one file.</p>
+        <p class="prose">Mute the voices one at a time to hear how each layer carries its weight.</p>
+        <div class="rig">
+          <div class="rig-head"><div class="rig-title">slipstream · condensed</div><button class="play" id="p8"><span class="ico"></span>play</button></div>
+          <div class="chips" id="mute8" style="margin-bottom:18px"></div>
+          <div class="grid-row"><div class="label" style="--rowc:var(--gold)"><span class="sw"></span>mix</div><div class="cells" id="g8" style="--n:16"></div></div>
+        </div>
+        <div class="code"><div class="bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">slipstream.fugue</span></div><pre id="c8"></pre></div>
+        <div class="tip">This is the real engine playing slipstream.fugue from the reference — bit-for-bit the same source the playground runs. Mute layers to hear how each carries its weight.</div>
+      </section>
+
+      <!-- FOOTER -->
+      <footer class="foot">
+        <div class="arc">FUGUE · the primer · lessons 01–08<br/>beats → sounds → basslines → chords → melodies → movement → arrange → <b>the whole piece</b></div>
+        <h3>Now go make something.</h3>
+        <button class="back">▸ Back to the playground</button>
+      </footer>
+
+    </div>
+  </div>
+</div>
+
+<script type="module">
+/* ════════════════════════════════════════════════════════════════════
+   The Fugue Primer — driven by the real engine.
+
+   Every lesson generates a real `.fugue` source from its UI state and plays
+   it through the WASM interpreter on an AudioWorklet (the same engine the
+   playground runs). The code you see IS the code that's playing. There is no
+   mock — toggling a cell, turning a knob, or picking a chord rewrites the
+   source and hot-swaps it live.
+   ════════════════════════════════════════════════════════════════════ */
+import { EngineCore } from "../engine-core.js";
+
+// One shared engine for the whole page; only one lesson sounds at a time.
+let engineStep = null;   // active EngineStep instance (drives cursor via onMeter)
+let readyCb = null;      // one-shot callback fired on engine {ok} ack (lesson 8 mute replay)
+const core = new EngineCore({
+  onError: (m) => console.warn("[fugue]", m),
+  onMeter: () => { if (engineStep) engineStep.tick(core.audioCtx?.currentTime ?? 0); },
+  onReady: () => { if (readyCb) { readyCb(); readyCb = null; } },
+});
+window.__fugueCore = core;   // test/debug hook — inspect voices + levels live
+let current = null;          // { stop } of the lesson currently playing
+const CYCLE = (bpm) => 240000 / bpm;   // one cycle = one bar = 4 beats (ms)
+
+function btnOn(b)  { b.classList.add("on");  b.childNodes[1].nodeValue = "stop"; }
+function btnOff(b) { b.classList.remove("on"); b.childNodes[1].nodeValue = "play"; }
+
+async function stopAll() {
+  if (current) { current.stop(); current = null; }
+  engineStep = null;
+  document.querySelectorAll("button.play.on").forEach(btnOff);
+  await core.suspend();
+}
+
+// Start the engine on first use (a user gesture), else hot-swap, then run.
+async function engineRun(src) {
+  if (!core.started) await core.start(src);
+  else core.hotSwap(src);
+  await core.resume();
+}
+
+// Engine-driven step cursor. Same constructor signature as the old Clock so
+// lessons only need `step: new EngineStep(...)` instead of `clock: new Clock(...)`.
+// `tick(t)` is called by the onMeter callback with AudioContext.currentTime (seconds);
+// no setInterval — no drift, no background-tab throttle.
+class EngineStep {
+  constructor(steps, stepMs, onStep) { this.steps = steps; this.ms = stepMs; this.onStep = onStep; this.t0 = null; this.last = -1; this.active = false; }
+  start() { this.active = true; this.t0 = null; this.last = -1; }
+  tick(t) {
+    if (!this.active) return;
+    if (this.t0 === null) { this.t0 = t; this.last = 0; this.onStep(0); return; }
+    const s = Math.floor((t - this.t0) * 1000 / this.ms) % this.steps;
+    if (s !== this.last) { this.last = s; this.onStep(s); }
+  }
+  stop() { this.active = false; this.t0 = null; this.onStep(-1); }
+}
+
+// Wire a play/stop button. `build()` returns { src, step }.
+function wirePlay(btn, build) {
+  let busy = false;
+  btn.addEventListener("click", async () => {
+    if (btn.classList.contains("on")) { await stopAll(); return; }
+    if (busy) return;
+    busy = true;
+    await stopAll();
+    await core.teardown();  // fresh engine per lesson — transport resets to 0, cursor stays in sync
+    const { src, step } = build();
+    engineStep = step;
+    btnOn(btn);
+    try {
+      await engineRun(src);
+    } catch (_) {
+      engineStep = null;
+      btnOff(btn);
+      busy = false;
+      return;
+    }
+    step.start();
+    current = { stop() { step.stop(); engineStep = null; btnOff(btn); } };
+    busy = false;
+  });
+}
+
+// STRUCTURAL live edit (cell toggled, chord/transform picked, sidechain
+// flipped): re-render the code and, if THIS lesson is playing, hot-swap the
+// engine. Throttled (leading + trailing) so rapid clicks don't thrash; the
+// leading edge keeps a single toggle feeling instant.
+let swapTimer = null, swapLast = 0;
+function liveSwap(btn, srcFn) {
+  if (!btn.classList.contains("on")) return;
+  const fire = () => { swapLast = performance.now(); if (btn.classList.contains("on")) core.hotSwap(srcFn()); };
+  clearTimeout(swapTimer);
+  const wait = 80 - (performance.now() - swapLast);
+  if (wait <= 0) fire();
+  else swapTimer = setTimeout(fire, wait);
+}
+
+// PARAM live edit (a knob drag): push the value straight to the running
+// engine via set_param — no re-compile, no re-eval, so the sound morphs
+// continuously with zero audio cut, exactly like the playground's in-editor
+// @param knobs. `engine` is the namespaced name the compiler assigns
+// (`<process>_<param>`, or the bare binding for a top-level param); `value`
+// is already SI (Hz / seconds), so a ms knob passes `ms * 0.001`.
+function liveParam(btn, engine, value) {
+  if (btn.classList.contains("on")) core.setParam(engine, value);
+}
+
+// ── reusable drag-knob ────────────────────────────────────────────────
+// `param` (optional) is the identifier the knob maps to in the code shown
+// below — rendered as a mono sub-label so the lesson's "the knobs ARE the
+// parameters in the code" is literally legible.
+function addKnob(wrap, { name, param, min, max, log, fmt, get, set }) {
+  const el = document.createElement("div"); el.className = "knob";
+  el.innerHTML = '<div class="dial"><div class="ind"></div><div class="ctr"></div></div>'
+    + '<div class="kname">' + name + (param ? '<span class="kp">' + param + '</span>' : '') + '</div>'
+    + '<div class="kval"></div>';
+  const dial = el.querySelector(".dial"), val = el.querySelector(".kval");
+  const norm = () => log ? Math.log(get() / min) / Math.log(max / min) : (get() - min) / (max - min);
+  function paint() { dial.style.setProperty("--rot", (-135 + norm() * 270) + "deg"); val.textContent = fmt(get()); }
+  function setN(n) { n = Math.max(0, Math.min(1, n)); set(log ? min * Math.pow(max / min, n) : min + n * (max - min)); paint(); }
+  paint();
+  let drag = false, sy = 0, sn = 0;
+  dial.addEventListener("pointerdown", e => { drag = true; sy = e.clientY; sn = norm(); dial.setPointerCapture(e.pointerId); });
+  dial.addEventListener("pointermove", e => { if (!drag) return; setN(sn + (sy - e.clientY) / 180); });
+  dial.addEventListener("pointerup", () => drag = false);
+  wrap.appendChild(el); return { paint };
+}
+
+// ── tiny fugue-code renderer ──────────────────────────────────────────
+function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+function hl(line) {
+  const strs = []; line = line.replace(/"[^"]*"/g, m => { strs.push(m); return "\x00" + String.fromCharCode(65 + strs.length - 1) + "\x00"; });
+  let cmt = ""; const ci = line.indexOf("//"); if (ci >= 0) { cmt = line.slice(ci); line = line.slice(0, ci); }
+  let out = esc(line);
+  out = out.replace(/(-&gt;|\|&gt;)/g, '<span class="op">$1</span>');
+  out = out.replace(/\b(process|param\.log|param\.lin|voicing|scale|octave|every|rev|jux|palindrome|degrade_by|degrade|fast|slow|iter|tempo|voices)\b/g, '<span class="kw">$1</span>');
+  out = out.replace(/\b(\d+\.?\d*)(Hz|kHz|ms|s|bpm)?\b/g, (m, n, u) => '<span class="num">' + n + (u || "") + "</span>");
+  out = out.replace(/\x00([A-Z])\x00/g, (m, ch) => '<span class="str">' + esc(strs[ch.charCodeAt(0) - 65]) + "</span>");
+  if (cmt) out += '<span class="cmt">' + esc(cmt) + "</span>";
+  return out;
+}
+function renderCode(el, src) { el.innerHTML = src.trimEnd().split("\n").map(hl).join("\n"); }
+
+const mini = (arr) => arr.map(x => x ? (x === 1 ? "1" : x) : "~").join(" ");
+
+/* ════════════════════ LESSON 1 — beats ════════════════════ */
+(function () {
+  const N = 8, rows = [
+    { name: "kick",  col: "var(--ember)", pat: [1,0,0,0,1,0,0,0] },
+    { name: "hat",   col: "var(--teal)",  pat: [0,0,1,0,0,0,1,0] },
+    { name: "snare", col: "var(--gold)",  pat: [0,0,0,0,1,0,0,0] },
+  ];
+  const btn = document.getElementById("p1"), code = document.getElementById("c1");
+  const wrap = document.getElementById("g1");
+  rows.forEach(r => {
+    const row = document.createElement("div"); row.className = "grid-row"; row.style.setProperty("--rowc", r.col);
+    row.innerHTML = `<div class="label"><span class="sw"></span>${r.name}</div>`;
+    const cells = document.createElement("div"); cells.className = "cells"; cells.style.setProperty("--n", N);
+    r.cells = [];
+    for (let i = 0; i < N; i++) {
+      const c = document.createElement("div"); c.className = "cell" + (i % 2 === 0 ? " beat" : "") + (r.pat[i] ? " on" : "");
+      c.addEventListener("click", () => { r.pat[i] ^= 1; c.classList.toggle("on", !!r.pat[i]); draw(); liveSwap(btn, source); });
+      cells.appendChild(c); r.cells.push(c);
+    }
+    row.appendChild(cells); wrap.appendChild(row);
+  });
+  const HEAD =
+`tempo = 120bpm
+
+process kick(trig)  { out = kick(48Hz, 105Hz, 160ms, 2.4, trig) * adsr(0.1ms, 250ms, 0.05, 300ms, trig) * 0.6 }
+process snare(trig) {
+    cut = param.log(800Hz, 3kHz) 1.8kHz |> smooth(15ms)
+    out = (noise(7) |> bpf(cut, 1.1)) * adsr(1ms, 140ms, 0.0, 12ms, trig) * 0.24
+}
+process hat(trig) {
+    tone = param.log(6kHz, 13kHz) 9kHz |> smooth(8ms)
+    out  = (noise(13) |> bpf(tone, 0.6)) * adsr(1ms, 60ms, 0.0, 5ms, trig) * 0.13
+}
+`;
+  const source = () => HEAD + "\n" +
+    `"${mini(rows[0].pat)}" -> kick\n` +
+    `"${mini(rows[1].pat)}" -> hat\n` +
+    `"${mini(rows[2].pat)}" -> snare\n`;
+  function draw() { renderCode(code, source()); }
+  draw();
+  wirePlay(btn, () => ({
+    src: source(),
+    step: new EngineStep(N, CYCLE(120) / N, (i) => rows.forEach(r => r.cells.forEach((c, j) => {
+      c.classList.toggle("cursor", j === i);
+      if (j === i && r.pat[i]) { c.classList.remove("flash"); void c.offsetWidth; c.classList.add("flash"); }
+    }))),
+  }));
+})();
+
+/* ════════════════════ LESSON 2 — sounds ════════════════════ */
+(function () {
+  const N = 8, gate = [1,0,1,0,1,1,0,1];
+  const RIFF = ["c3", null, "eb3", null, "g3", "c3", null, "bb2"];
+  const P = { cutoff: 1100, res: 6, attack: 6, decay: 140 };  // Hz, q, ms, ms
+  // `param` = the binding the knob writes in the code below; `engine` = the
+  // namespaced set_param name (process `tone` → `tone_<binding>`); `si` scales
+  // the knob's display units to engine SI (ms → s) for the live set_param.
+  const defs = [
+    { k: "cutoff", name: "cutoff", param: "cut", engine: "tone_cut", si: 1,     min: 200, max: 6000, log: true, fmt: v => Math.round(v) + "Hz" },
+    { k: "res",    name: "reso",   param: "res", engine: "tone_res", si: 1,     min: 0.5, max: 18,   fmt: v => v.toFixed(1) },
+    { k: "attack", name: "attack", param: "atk", engine: "tone_atk", si: 0.001, min: 2,   max: 250,  fmt: v => Math.round(v) + "ms" },
+    { k: "decay",  name: "decay",  param: "dec", engine: "tone_dec", si: 0.001, min: 40,  max: 600,  fmt: v => Math.round(v) + "ms" },
+  ];
+  const btn = document.getElementById("p2"), code = document.getElementById("c2");
+  const kwrap = document.getElementById("k2");
+  defs.forEach(d => addKnob(kwrap, {
+    name: d.name, param: d.param, min: d.min, max: d.max, log: d.log, fmt: d.fmt,
+    get: () => P[d.k], set: v => { P[d.k] = v; draw(); liveParam(btn, d.engine, v * d.si); },
+  }));
+  const cells = []; const g = document.getElementById("g2");
+  for (let i = 0; i < N; i++) {
+    const isNull = RIFF[i] === null;
+    const c = document.createElement("div"); c.className = "cell" + (i % 2 ? "" : " beat") + (gate[i] && !isNull ? " on" : ""); c.style.setProperty("--rowc", "var(--teal)");
+    if (isNull) { c.style.cursor = "default"; c.style.opacity = "0.35"; }
+    else c.addEventListener("click", () => { gate[i] ^= 1; c.classList.toggle("on", !!gate[i]); draw(); liveSwap(btn, source); });
+    g.appendChild(c); cells.push(c);
+  }
+  const pat = () => RIFF.map((n, i) => (gate[i] && n) ? n : "~").join(" ");
+  const source = () =>
+`tempo = 112bpm
+
+process tone(note, trig) {
+    cut = param.log(200Hz, 6kHz) ${Math.round(P.cutoff)}Hz
+    res = param.lin(0.5, 18) ${P.res.toFixed(1)}
+    atk = param.lin(2ms, 250ms) ${Math.round(P.attack)}ms
+    dec = param.lin(40ms, 600ms) ${Math.round(P.decay)}ms
+    out = (saw(note) |> lpf(cut, res)) * adsr(atk, dec, 0.2, 180ms, trig) * 0.28
+}
+
+"${pat()}" -> tone
+`;
+  function draw() { renderCode(code, source()); }
+  draw();
+  wirePlay(btn, () => ({
+    src: source(),
+    step: new EngineStep(N, CYCLE(112) / N, (i) => cells.forEach((c, j) => {
+      c.classList.toggle("cursor", j === i);
+      if (j === i && gate[j] && RIFF[j] !== null) { c.classList.remove("flash"); void c.offsetWidth; c.classList.add("flash"); }
+    })),
+  }));
+})();
+
+/* ════════════════════ LESSON 3 — basslines ════════════════════ */
+(function () {
+  const N = 8;
+  const SCALE = [null, "a1", "c2", "d2", "e2", "g2", "a2", "c3"];  // rest + A-minor pentatonic
+  const seq = ["a1", "a1", null, "c2", null, "e2", "d2", null];
+  const btn = document.getElementById("p3"), code = document.getElementById("c3");
+  const g = document.getElementById("g3"), steps = [];
+  const disp = n => n ? n.toUpperCase() : "~";
+  for (let i = 0; i < N; i++) {
+    const s = document.createElement("div"); s.className = "nstep" + (seq[i] ? " set" : ""); s.textContent = disp(seq[i]);
+    s.addEventListener("click", () => {
+      let idx = SCALE.indexOf(seq[i]); idx = (idx + 1) % SCALE.length; seq[i] = SCALE[idx];
+      s.textContent = disp(seq[i]); s.classList.toggle("set", !!seq[i]); draw(); liveSwap(btn, source);
+    });
+    g.appendChild(s); steps.push(s);
+  }
+  const pat = () => seq.map(n => n || "~").join(" ");
+  const source = () =>
+`tempo = 108bpm
+
+process bass(note, trig) {
+    out = (saw(note) |> ladder(900Hz, 0.5) |> tanh(1.8)) * ar(6ms, 160ms, trig) * 0.5
+}
+
+"${pat()}" -> bass
+`;
+  function draw() { renderCode(code, source()); }
+  draw();
+  wirePlay(btn, () => ({
+    src: source(),
+    step: new EngineStep(N, CYCLE(108) / N, (i) => steps.forEach((s, j) => s.classList.toggle("cursor", j === i))),
+  }));
+})();
+
+/* ════════════════════ LESSON 4 — chords ════════════════════ */
+(function () {
+  const BANK = ["Am7", "Dm7", "Em7", "Cmaj7", "Fmaj7", "G7", "Bbm9", "Fm9"];
+  const sel = ["Am7", "Dm7"];
+  const btn = document.getElementById("p4"), code = document.getElementById("c4");
+  [0, 1].forEach(slot => {
+    const wrap = document.getElementById("ch" + slot);
+    BANK.forEach(name => {
+      const c = document.createElement("div"); c.className = "chip" + (sel[slot] === name ? " sel" : ""); c.textContent = name;
+      c.addEventListener("click", () => {
+        sel[slot] = name; wrap.querySelectorAll(".chip").forEach(x => x.classList.toggle("sel", x.textContent === name));
+        draw(); liveSwap(btn, source);
+      });
+      wrap.appendChild(c);
+    });
+  });
+  const g = document.getElementById("g4"), cells = [];
+  for (let i = 0; i < 2; i++) { const c = document.createElement("div"); c.className = "cell on"; c.style.setProperty("--rowc", "var(--rose)"); c.style.cursor = "default"; c.style.pointerEvents = "none"; g.appendChild(c); cells.push(c); }
+  const source = () =>
+`tempo = 104bpm
+
+process keys(note, trig) voices 6 {
+    out = (saw(note) |> ladder(2.2kHz, 0.4)) * adsr(20ms, 500ms, 0.5, 500ms, trig) * 0.12
+}
+
+"<${sel[0]} ${sel[1]}>" |> voicing -> keys
+`;
+  function draw() { renderCode(code, source()); }
+  draw();
+  wirePlay(btn, () => ({
+    src: source(),
+    step: new EngineStep(2, CYCLE(104), (i) => cells.forEach((c, j) => {
+      c.classList.toggle("cursor", j === i);
+      if (j === i) { c.classList.remove("flash"); void c.offsetWidth; c.classList.add("flash"); }
+    })),
+  }));
+})();
+
+/* ════════════════════ LESSON 5 — melodies ════════════════════ */
+(function () {
+  const N = 8;
+  const SCALE = [null, "a3", "c4", "d4", "e4", "g4", "a4", "c5", "e5"];
+  const seq = ["a4", null, "c5", "e4", null, "g4", "d4", null];
+  let tf = "";
+  const TFC = { none: "", rev: " |> rev", jux: " |> jux(rev)", every4: " |> every(4, rev)" };
+  const btn = document.getElementById("p5"), code = document.getElementById("c5");
+  const disp = n => n ? n.toUpperCase() : "~";
+  const g = document.getElementById("g5"), steps = [];
+  for (let i = 0; i < N; i++) {
+    const s = document.createElement("div"); s.className = "nstep" + (seq[i] ? " set" : ""); s.textContent = disp(seq[i]);
+    s.addEventListener("click", () => {
+      let idx = SCALE.indexOf(seq[i]); idx = (idx + 1) % SCALE.length; seq[i] = SCALE[idx];
+      s.textContent = disp(seq[i]); s.classList.toggle("set", !!seq[i]); draw(); liveSwap(btn, source);
+    });
+    g.appendChild(s); steps.push(s);
+  }
+  const tw = document.getElementById("tf5");
+  [["none", "none"], ["rev", "rev"], ["jux(rev)", "jux"], ["every(4, rev)", "every4"]].forEach(([lab, val]) => {
+    const c = document.createElement("div"); c.className = "chip" + (val === "none" ? " sel" : ""); c.textContent = lab;
+    c.addEventListener("click", () => { tf = TFC[val]; tw.querySelectorAll(".chip").forEach(x => x.classList.remove("sel")); c.classList.add("sel"); draw(); liveSwap(btn, source); });
+    tw.appendChild(c);
+  });
+  const pat = () => seq.map(n => n || "~").join(" ");
+  const source = () =>
+`tempo = 112bpm
+
+process lead(note, trig) {
+    out = (saw(note) |> ladder(2.6kHz, 0.3)) * adsr(4ms, 100ms, 0.2, 160ms, trig) * 0.32
+}
+
+"${pat()}"${tf} -> lead
+`;
+  function draw() { renderCode(code, source()); }
+  draw();
+  wirePlay(btn, () => ({
+    src: source(),
+    step: new EngineStep(N, CYCLE(112) / N, (i) => steps.forEach((s, j) => s.classList.toggle("cursor", j === i))),
+  }));
+})();
+
+/* ════════════════════ LESSON 6 — movement ════════════════════ */
+(function () {
+  const N = 8;
+  const P = { rate: 0.3, depth: 430 };
+  let sc = true;
+  const kickPat = [1,0,0,0,1,0,0,0];
+  const btn = document.getElementById("p6"), code = document.getElementById("c6");
+  const g = document.getElementById("g6"), cells = [];
+  for (let i = 0; i < N; i++) {
+    const c = document.createElement("div"); c.className = "cell" + (i % 2 ? "" : " beat") + (kickPat[i] ? " on" : ""); c.style.setProperty("--rowc", "var(--ember)");
+    c.addEventListener("click", () => { kickPat[i] ^= 1; c.classList.toggle("on", !!kickPat[i]); draw(); liveSwap(btn, source); });
+    g.appendChild(c); cells.push(c);
+  }
+  const kw = document.getElementById("k6");
+  // rate + depth are params of the `pad` process (the LFO breathes the cutoff
+  // from inside the voice), so their set_param names are `pad_<binding>`. Both
+  // are Hz, so si = 1.
+  addKnob(kw, { name: "lfo rate", param: "rate", min: 0.03, max: 3, log: true, fmt: v => v.toFixed(2) + "Hz", get: () => P.rate, set: v => { P.rate = v; draw(); liveParam(btn, "pad_rate", v); } });
+  addKnob(kw, { name: "depth", param: "depth", min: 50, max: 1200, log: true, fmt: v => Math.round(v) + "Hz", get: () => P.depth, set: v => { P.depth = v; draw(); liveParam(btn, "pad_depth", v); } });
+  const scw = document.getElementById("sc6"); const chip = document.createElement("div"); chip.className = "chip sel"; chip.textContent = "sidechain: on";
+  chip.addEventListener("click", () => { sc = !sc; chip.classList.toggle("sel", sc); chip.textContent = "sidechain: " + (sc ? "on" : "off"); draw(); liveSwap(btn, source); });
+  scw.appendChild(chip);
+  const source = () =>
+`tempo = 120bpm
+
+process kick(trig) { out = kick(48Hz, 105Hz, 160ms, 2.4, trig) * adsr(0.1ms, 250ms, 0.05, 300ms, trig) * 0.6 }
+
+process pad(note, trig, duck: audio) {
+    rate  = param.log(0.03Hz, 3Hz)  ${P.rate.toFixed(2)}Hz
+    depth = param.log(50Hz, 1200Hz) ${Math.round(P.depth)}Hz
+    cut   = 800Hz + lfo(rate) * depth
+    body  = (saw(note) + saw(note * 1.5)) |> ladder(cut, 0.4)
+    out   = body * adsr(200ms, 400ms, 0.8, 800ms, trig) * (1.0 - 0.82 * env_follow(duck, 18ms)) * 0.12
+}
+
+"<Bbm9>" |> voicing        -> pad
+"${mini(kickPat)}" -> kick
+${sc ? "kick                       -> pad.duck   // sidechain" : "// (sidechain off)"}
+`;
+  function draw() { renderCode(code, source()); }
+  draw();
+  wirePlay(btn, () => ({
+    src: source(),
+    step: new EngineStep(N, CYCLE(120) / N, (i) => cells.forEach((c, j) => {
+      c.classList.toggle("cursor", j === i);
+      if (j === i && kickPat[j]) { c.classList.remove("flash"); void c.offsetWidth; c.classList.add("flash"); }
+    })),
+  }));
+})();
+
+/* ════════════════════ LESSON 7 — arrange ════════════════════ */
+(function () {
+  const BARS = 8;
+  const Vs = [
+    { n: "kick", c: "var(--ember)",  mask: [1,1,1,1,1,1,1,0] },
+    { n: "hat",  c: "var(--teal)",   mask: [0,0,1,1,1,1,1,0] },
+    { n: "bass", c: "var(--violet)", mask: [0,1,1,1,1,1,0,0] },
+    { n: "keys", c: "var(--rose)",   mask: [1,0,0,1,1,1,1,1] },
+  ];
+  const btn = document.getElementById("p7"), code = document.getElementById("c7");
+  const wrap = document.getElementById("g7");
+  Vs.forEach(v => {
+    const row = document.createElement("div"); row.className = "grid-row"; row.style.setProperty("--rowc", v.c);
+    row.innerHTML = '<div class="label"><span class="sw"></span>' + v.n + "</div>";
+    const cells = document.createElement("div"); cells.className = "cells"; cells.style.setProperty("--n", BARS); v.cells = [];
+    for (let b = 0; b < BARS; b++) {
+      const c = document.createElement("div"); c.className = "cell" + (v.mask[b] ? " on" : "");
+      c.addEventListener("click", () => { v.mask[b] ^= 1; c.classList.toggle("on", !!v.mask[b]); draw(); liveSwap(btn, source); });
+      cells.appendChild(c); v.cells.push(c);
+    }
+    row.appendChild(cells); wrap.appendChild(row);
+  });
+  const source = () =>
+`tempo = 124bpm
+
+process kick(trig)  { out = kick(48Hz, 105Hz, 160ms, 2.4, trig) * adsr(0.1ms, 250ms, 0.05, 300ms, trig) * 0.6 }
+process hat(trig) {
+    tone = param.log(6kHz, 13kHz) 9kHz |> smooth(8ms)
+    out  = (noise(13) |> bpf(tone, 0.6)) * adsr(1ms, 60ms, 0.0, 5ms, trig) * 0.13
+}
+process bass(note, trig) { out = (saw(note) |> ladder(780Hz, 0.5) |> tanh(1.6)) * ar(6ms, 180ms, trig) * 0.28 }
+process keys(note, trig) voices 6 { out = (saw(note) |> ladder(1.9kHz, 0.4)) * adsr(20ms, 600ms, 0.5, 700ms, trig) * 0.085 }
+
+"1 ~ ~ ~ 1 ~ ~ ~"         -> kick
+"~ ~ 1 ~ ~ ~ 1 1"         -> hat
+"bb1 ~ bb1 f1 ~ ab1 f1 ~" -> bass
+"<Bbm9 Fm9>" |> voicing   -> keys
+
+kick * "<${mini(Vs[0].mask)}>" -> out
+hat  * "<${mini(Vs[1].mask)}>" -> out
+bass * "<${mini(Vs[2].mask)}>" -> out
+keys * "<${mini(Vs[3].mask)}>" -> out
+`;
+  function draw() { renderCode(code, source()); }
+  draw();
+  wirePlay(btn, () => ({
+    src: source(),
+    step: new EngineStep(BARS, CYCLE(124), (bar) => Vs.forEach(v => v.cells.forEach((c, b) => c.classList.toggle("cursor", b === bar)))),
+  }));
+})();
+
+/* ════════════════════ LESSON 8 — the whole piece ════════════════════ */
+(function () {
+  const STEPS = 8, BPM = 114;  // matches slipstream.fugue: tempo=114bpm, 8-step patterns
+  const btn = document.getElementById("p8"), code = document.getElementById("c8");
+  const mw = document.getElementById("mute8");
+  const g = document.getElementById("g8"), cells = [];
+  for (let i = 0; i < STEPS; i++) { const c = document.createElement("div"); c.className = "cell" + (i % 2 === 0 ? " beat" : ""); c.style.setProperty("--rowc", "var(--gold)"); c.style.cursor = "default"; c.style.pointerEvents = "none"; g.appendChild(c); cells.push(c); }
+  let src = 'tempo = 114bpm\n// loading slipstream.fugue…\n';
+  const muted = {};
+  const PALETTE = ["var(--ember)", "var(--teal)", "var(--violet)", "var(--rose)", "var(--gold)"];
+  function buildChips() {
+    mw.innerHTML = "";
+    const names = [...src.matchAll(/process\s+(\w+)\s*\(/g)].map(m => m[1]);
+    names.forEach((name, i) => {
+      const c = document.createElement("div"); c.className = "chip sel"; c.textContent = name;
+      c.style.setProperty("--chip-col", PALETTE[i % PALETTE.length]);
+      c.addEventListener("click", () => { muted[name] = !muted[name]; c.classList.toggle("sel", !muted[name]); core.muteVoice(name, !!muted[name]); });
+      mw.appendChild(c);
+    });
+  }
+  fetch("../patches/slipstream.fugue").then(r => r.ok ? r.text() : Promise.reject(r.status))
+    .then(t => { src = t; renderCode(code, src); buildChips(); if (btn.classList.contains("on")) core.hotSwap(src); })
+    .catch(() => {});
+  renderCode(code, src);
+  wirePlay(btn, () => {
+    readyCb = () => {
+      Object.entries(muted).forEach(([n, m]) => { if (m) core.muteVoice(n, true); });
+    };
+    return {
+      src,
+      step: new EngineStep(STEPS, CYCLE(BPM) / STEPS, (i) => cells.forEach((c, j) => c.classList.toggle("cursor", j === i))),
+    };
+  });
+})();
+
+/* ════════════════════ modal chrome — nav pips + close ════════════════════ */
+// Lesson nav pips: jump the scroll body to each lesson, and light the pip of
+// whichever lesson is currently in view (scroll-spy) — not just on click.
+(function () {
+  const nav = document.getElementById("nav");
+  const pips = {};
+  const setActive = (i) => { for (const k in pips) pips[k].classList.toggle("on", +k === i); };
+  for (let i = 1; i <= 8; i++) {
+    const p = document.createElement("div"); p.className = "pip" + (i === 1 ? " on" : ""); p.textContent = String(i).padStart(2, "0");
+    p.addEventListener("click", () => {
+      const sec = document.querySelector('.lesson[data-lesson="' + i + '"]');
+      setActive(i);  // immediate feedback; the observer keeps it honest as the scroll settles
+      if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    nav.appendChild(p); pips[i] = p;
+  }
+  // The lesson crossing the scroll body's vertical centre is the current one.
+  // A zero-height centre band means exactly one lesson is "in" it at a time.
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((e) => { if (e.isIntersecting) setActive(+e.target.dataset.lesson); });
+  }, { root: document.getElementById("body"), rootMargin: "-50% 0px -50% 0px", threshold: 0 });
+  document.querySelectorAll(".lesson[data-lesson]").forEach((s) => io.observe(s));
+})();
+
+// Embedded as a playground modal (?modal=1, or any iframe): close posts to the
+// parent. Standalone: close navigates back to the playground.
+const EMBED = new URLSearchParams(location.search).has("modal") || window.parent !== window;
+function closeModal() {
+  try { stopAll(); } catch (_) {}
+  if (EMBED) { try { parent.postMessage({ type: "fugue-learn-close" }, "*"); } catch (_) {} }
+  else { location.href = "../"; }
+}
+document.querySelector(".m-close").addEventListener("click", closeModal);
+document.querySelector(".foot .back").addEventListener("click", closeModal);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
+// Parent asks us to stop (it closed the overlay from its side), or hands us a
+// fresh theme/accent (it reopened the persisted iframe after a theme change).
+window.addEventListener("message", (e) => {
+  if (!e.data) return;
+  if (e.data.type === "fugue-learn-stop") { try { stopAll(); } catch (_) {} }
+  else if (e.data.type === "fugue-theme") window.__fugueTheme(e.data.theme, e.data.accent);
+});
+</script>
+<!-- Analytics: GoatCounter — see ../index.html. Counts learn-page visits. -->
+<script data-goatcounter="https://fuguefm.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
+</body>
+</html>

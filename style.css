@@ -28,13 +28,13 @@
     --signal: #ff551d;
     --signal-deep: #c93d10;
     --signal-soft: #ffd0bd;
+    --signal-sel: rgba(255, 85, 29, 0.3);
+    /* translucent accent for text selection; recomputed per-accent in JS */
     --signal-ink: #141414;
 
-    /* Compatibility aliases — older selectors in main.js still reach for
-     * --brick / --signal-soft. Keep both names alive so a missed reference
-     * doesn't render as the literal string "var(--brick)". */
-    --brick: var(--signal);
-    --brick-soft: var(--signal-soft);
+    /* REC — the record red. Independent of the accent so a take always reads
+       the same colour whatever the signal is set to. */
+    --rec: #e5342b;
 
     --display: 'Bricolage Grotesque', 'Space Grotesk', sans-serif;
     --sans: 'Space Grotesk', 'Helvetica Neue', Helvetica, Arial, sans-serif;
@@ -101,8 +101,7 @@ body.zen .status {
 
 /* ── Chrome ─────────────────────────────────────────────────────────── */
 .chrome {
-    display: grid;
-    grid-template-columns: minmax(280px, auto) 1fr auto auto auto auto;
+    display: flex;
     align-items: stretch;
     height: var(--chrome-h);
     background: var(--surface);
@@ -110,17 +109,23 @@ body.zen .status {
     position: relative;
 }
 
+/* The spacer flexes the brand apart from everything right of it. Flex (not a
+   counted grid track) so adding or removing a chrome button never reflows. */
+.spacer {
+    flex: 1;
+}
+
 body.zen .chrome {
     height: 36px;
-    grid-template-columns: 1fr auto;
     border-bottom: 1px solid var(--hairline-2);
     background: var(--paper);
 }
 
 body.zen .brand,
-body.zen .controls,
+body.zen .cluster,
 body.zen .theme-toggle,
-body.zen .accents {
+body.zen .accents,
+body.zen .docs {
     display: none;
 }
 
@@ -132,16 +137,14 @@ body.zen .editor-head {
     display: none;
 }
 
-/* Brand cell — wordmark + version plate + the one rotated stamp. */
+/* Brand cell — wordmark + version plate; both are "about" doors. */
 .brand {
     padding: 0 22px;
     border-right: 1px solid var(--hairline);
     display: grid;
-    grid-template-columns: auto auto;
+    grid-template-columns: auto;
     grid-template-rows: 1fr auto;
     align-items: end;
-    column-gap: 12px;
-    overflow: hidden;
 }
 
 .wordmark {
@@ -159,6 +162,7 @@ body.zen .editor-head {
     display: inline-flex;
     align-items: baseline;
     padding-top: 4px;
+    cursor: pointer;
 }
 
 .wordmark .dot {
@@ -180,6 +184,36 @@ body.zen .editor-head {
     align-self: flex-end;
     margin-bottom: 4px;
     margin-left: 2px;
+}
+
+/* "about" cue — taught once on first run (JS adds .reveal for a few seconds),
+   then a quiet hover affordance on the wordmark. The version pill is the
+   other door. Handwriting kept at the house 16px (see the --hand pass). */
+.about-cue {
+    font-family: var(--hand);
+    font-style: normal;
+    font-weight: 500;
+    font-size: 16px;
+    line-height: 1;
+    letter-spacing: 0;
+    color: var(--signal);
+    align-self: center;
+    margin-left: 8px;
+    white-space: nowrap;
+    opacity: 0;
+    transform: translateX(-5px);
+    transition: opacity 0.22s ease, transform 0.22s ease;
+    pointer-events: none;
+}
+
+.wordmark:hover .about-cue,
+.about-cue.reveal {
+    opacity: 1;
+    transform: none;
+}
+
+body.zen .about-cue {
+    display: none;
 }
 
 body.zen .wordmark {
@@ -207,48 +241,45 @@ body.zen .wordmark .dot {
     white-space: nowrap;
 }
 
+/* The pill is an about door — clickable, with a hover colour shift as the
+   affordance. No revealed label, though: it stays the plain version chip. */
 .plate .pill {
     display: inline-flex;
     align-items: center;
     padding: 1px 6px;
     background: var(--ink);
     color: var(--surface);
+    border: none;
     border-radius: 999px;
+    font-family: var(--sans);
     font-size: 8px;
     letter-spacing: 0.2em;
     font-weight: 600;
+    cursor: pointer;
+    transition: background 0.14s ease, color 0.14s ease;
+}
+
+.plate .pill:hover {
+    background: var(--signal);
+    color: var(--signal-ink);
+}
+
+/* cold — version not yet resolved: hollow pill so the em-dash placeholder
+   reads as "loading", not a filled value. paintVersionPill() drops .cold. */
+.plate .pill.cold {
+    background: transparent;
+    color: var(--ink-3);
+    box-shadow: inset 0 0 0 1px var(--ink-3);
 }
 
 body.zen .plate {
     display: none;
 }
 
-.brand-stamp {
-    grid-row: 1 / 3;
-    grid-column: 2 / 3;
-    align-self: center;
-    font-family: var(--hand);
-    font-weight: 500;
-    font-size: 17px;
-    line-height: 1.05;
-    color: var(--signal);
-    transform: rotate(-7deg);
-    text-align: center;
-    white-space: nowrap;
-}
-
-body.zen .brand-stamp {
-    display: none;
-}
-
-@media (max-width: 1100px) {
-    .brand-stamp {
-        display: none;
-    }
-}
-
-/* Transport + master strip cluster. */
-.controls {
+/* Transport cluster — play · stop · record · share, icon-only.
+   (The master meter that used to sit here was retired: the mixer panel
+   already shows master + dBFS, so the chrome copy was a duplicate.) */
+.cluster {
     display: flex;
     align-items: stretch;
     height: 100%;
@@ -256,7 +287,7 @@ body.zen .brand-stamp {
     margin-left: 12px;
 }
 
-body.zen .controls {
+body.zen .cluster {
     display: none;
 }
 
@@ -265,19 +296,13 @@ body.zen .controls {
     background: none;
     border: none;
     border-right: 1px solid var(--hairline);
-    padding: 0 18px;
-    font-family: var(--sans);
-    font-weight: 700;
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.2em;
+    padding: 0 15px;
     color: var(--ink);
     cursor: pointer;
     display: flex;
     align-items: center;
-    gap: 10px;
-    white-space: nowrap;
-    transition: background 120ms ease;
+    justify-content: center;
+    transition: background 120ms ease, color 120ms ease;
 }
 
 .tbtn:hover {
@@ -285,8 +310,8 @@ body.zen .controls {
 }
 
 .tbtn .glyph {
-    width: 14px;
-    height: 14px;
+    width: 15px;
+    height: 15px;
     display: grid;
     place-items: center;
     color: currentColor;
@@ -322,57 +347,94 @@ body.zen .controls {
     animation: playIdlePulse 1.6s ease-in-out infinite;
 }
 
-.master-strip {
+/* Record — always armable (never greyed). Pressing it starts playback and
+   arms the take; pressing again finishes (playback keeps running). The red
+   dot is the whole affordance. */
+.tbtn.rec {
+    color: var(--rec);
+}
+
+.tbtn.rec:hover {
+    background: rgba(229, 52, 43, 0.08);
+}
+
+/* Recording — the red dot breathes at a fixed ~1s. No bar, no fill flip:
+   just the dot, so the state reads as "a take is rolling". */
+.tbtn.rec.on {
+    background: rgba(229, 52, 43, 0.10);
+}
+
+.tbtn.rec.on .glyph {
+    animation: recBreath 1s ease-in-out infinite;
+}
+
+@keyframes recBreath {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.4;
+    }
+}
+
+/* Bounce-length menu — a small popover under the record button. The button
+   is wrapped so the menu can anchor to it without disturbing the icon row. */
+.rec-wrap {
+    position: relative;
+    display: flex;
+    height: 100%;
+}
+
+.rec-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 60;
+    margin-top: 6px;
     display: flex;
     flex-direction: column;
-    justify-content: center;
-    gap: 5px;
-    padding: 0 18px;
-    min-width: 160px;
-    border-right: 1px solid var(--hairline);
+    min-width: 96px;
+    padding: 5px;
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 7px;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.18);
 }
 
-.master-strip .row {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 12px;
+.rec-menu[hidden] {
+    display: none;
 }
 
-.master-strip .lbl {
-    font-weight: 700;
-    font-size: 8.5px;
-    letter-spacing: 0.24em;
+.rec-menu-cap {
+    padding: 3px 7px 5px;
+    font-size: 9px;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
     color: var(--ink-3);
 }
 
-.master-strip .val {
-    font-family: var(--mono);
+.rec-menu button {
+    padding: 6px 8px;
+    background: none;
+    border: none;
+    border-radius: 5px;
+    text-align: left;
+    font: inherit;
     font-size: 12px;
     color: var(--ink);
+    cursor: pointer;
 }
 
-.master-strip .vu {
-    position: relative;
-    height: 4px;
-    background: var(--recess);
+.rec-menu button:hover {
+    background: rgba(229, 52, 43, 0.10);
 }
 
-.master-strip .vu .rms {
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    background: var(--ink);
-}
-
-.master-strip .vu .peak {
-    position: absolute;
-    top: -1px;
-    bottom: -1px;
-    width: 1.5px;
-    background: var(--signal);
+.rec-menu button.on {
+    color: var(--rec);
+    font-weight: 600;
 }
 
 /* Theme toggle. */
@@ -466,6 +528,327 @@ body.zen .zen-btn {
     font-size: 9.5px;
 }
 
+/* Docs pair — Learn + Ref share one bordered cell, split by an inner rule. */
+.docs {
+    display: flex;
+    align-items: stretch;
+    height: 100%;
+    border-right: 1px solid var(--hairline);
+}
+
+.docs .cheat-btn {
+    border-right: 1px solid var(--hairline);
+}
+
+.docs .cheat-btn:last-child {
+    border-right: none;
+}
+
+/* ── Cheatsheet: header button + dismissible drawer ─────────────────────
+ * The "Ref" button mirrors .zen-btn (right-side chrome). The drawer overlays
+ * the panels column (absolute inset:0 inside .panels-col) so the editor never
+ * reflows; it's non-modal — clicking back into the editor keeps it open. */
+.cheat-btn {
+    height: 100%;
+    background: none;
+    border: none;
+    padding: 0 18px;
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--ink);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    transition: background 120ms ease, color 120ms ease;
+}
+
+.cheat-btn:hover {
+    background: rgba(20, 20, 20, 0.04);
+    color: var(--signal);
+}
+
+.cheat-btn .glyph {
+    width: 12px;
+    height: 12px;
+    display: grid;
+    place-items: center;
+}
+
+body.zen .cheat-btn {
+    display: none;
+}
+
+.cheat-drawer {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-left: 1.5px solid var(--signal);
+    overflow: hidden;
+}
+
+.cheat-drawer[hidden] {
+    display: none;
+}
+
+.cheat-head {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    height: 36px;
+    padding: 0 14px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--hairline);
+}
+
+.cheat-title {
+    font-family: var(--sans);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--signal);
+}
+
+.cheat-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* Copy-all icon button — serialises the whole sheet to Markdown for an LLM.
+ * Borderless ghost icon, paired with the ✕ close. On success the copy icon
+ * swaps to a check; failure tints it deep-signal. */
+.cheat-copyall {
+    width: 22px;
+    height: 22px;
+    display: grid;
+    place-items: center;
+    background: none;
+    border: none;
+    border-radius: 2px;
+    color: var(--ink-3);
+    cursor: pointer;
+    padding: 0;
+    transition: color 120ms ease, background 120ms ease;
+}
+
+.cheat-copyall:hover {
+    color: var(--signal);
+}
+
+.cheat-copyall .ico-done {
+    display: none;
+}
+
+.cheat-copyall.copied {
+    color: var(--signal);
+}
+
+.cheat-copyall.copied .ico-copy {
+    display: none;
+}
+
+.cheat-copyall.copied .ico-done {
+    display: block;
+}
+
+.cheat-copyall.failed {
+    color: var(--signal-deep);
+}
+
+.cheat-close {
+    width: 20px;
+    height: 20px;
+    display: grid;
+    place-items: center;
+    background: none;
+    border: none;
+    color: var(--ink-3);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    transition: color 120ms ease;
+}
+
+.cheat-close:hover {
+    color: var(--ink);
+}
+
+.cheat-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 12px 14px 18px;
+}
+
+.cheat-loading {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-3);
+    padding: 8px 2px;
+}
+
+/* ── Cheatsheet content (the injected ./cheatsheet.html fragment) ──────── */
+.cheat-body .cs-sec {
+    margin-bottom: 16px;
+}
+
+/* The "Shape" skeleton — a fenced code block of a real, compiling patch. */
+.cheat-body .cs-code {
+    margin: 0 0 6px;
+    padding: 9px 10px;
+    background: var(--recess);
+    border-left: 2px solid var(--signal);
+    border-radius: 2px;
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 1.5;
+    color: var(--ink);
+    white-space: pre;
+    overflow-x: auto;
+}
+
+.cheat-body h3 {
+    margin: 0 0 7px;
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-family: var(--sans);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink);
+}
+
+.cheat-body h3.cs-warn {
+    color: var(--signal);
+}
+
+.cheat-body h3.cs-warn::before {
+    content: "!";
+    font-family: var(--display);
+    font-style: italic;
+    font-weight: 700;
+    font-size: 14px;
+    line-height: 1;
+}
+
+.cheat-body .cs-sub {
+    font-weight: 500;
+    font-size: 9.5px;
+    letter-spacing: 0.04em;
+    text-transform: none;
+    color: var(--ink-3);
+}
+
+.cheat-body .cs-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0;
+}
+
+.cheat-body .cs-table td,
+.cheat-body .cs-table th {
+    text-align: left;
+    vertical-align: top;
+    padding: 4px 8px 4px 0;
+    border-bottom: 1px solid var(--hairline-2);
+    font-family: var(--sans);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--ink-2);
+}
+
+.cheat-body .cs-table th {
+    width: 1%;
+    white-space: nowrap;
+    padding-right: 12px;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+}
+
+.cheat-body .cs-guess {
+    color: var(--ink-3);
+}
+
+.cheat-body .cs-dim {
+    color: var(--ink-3);
+}
+
+.cheat-body .cs-note {
+    margin: 6px 0 0;
+    font-family: var(--sans);
+    font-size: 10.5px;
+    line-height: 1.6;
+    color: var(--ink-2);
+}
+
+/* Concise bullet notes — same voice as .cs-note, one point per line.
+   Typography lives on the <li> (the text-bearing element) so it never depends
+   on inheritance from the <ul>. */
+.cheat-body .cs-list {
+    margin: 6px 0 0;
+    padding-left: 15px;
+    list-style: disc;
+}
+
+.cheat-body .cs-list li {
+    margin: 2px 0;
+    font-family: var(--sans);
+    font-size: 10.5px;
+    line-height: 1.5;
+    color: var(--ink-2);
+}
+
+.cheat-body code {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--ink);
+    background: var(--recess);
+    border-radius: 2px;
+    padding: 1px 4px;
+    white-space: nowrap;
+}
+
+/* Stage/transform/gotcha cells hold many code chips — let them breathe. */
+.cheat-body .cs-table code,
+.cheat-body .cs-note code,
+.cheat-body .cs-list code {
+    display: inline-block;
+    margin: 2px 2px 2px 0;
+}
+
+.cheat-body code.cs-copy {
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+}
+
+.cheat-body code.cs-copy:hover {
+    background: var(--signal);
+    color: var(--signal-ink);
+}
+
+.cheat-body code.cs-copy.copied {
+    background: var(--signal-soft);
+    color: var(--ink);
+}
+
 /* ── Tabs row ───────────────────────────────────────────────────────── */
 .tabs {
     display: flex;
@@ -541,6 +924,45 @@ body.zen .zen-btn {
     opacity: 1;
 }
 
+.file-tab .close {
+    font-family: var(--sans);
+    font-size: 13px;
+    line-height: 1;
+    color: var(--ink-4);
+    opacity: 0;
+    /* revealed on hover / active — layout stays stable */
+    cursor: pointer;
+    padding: 0 1px;
+    border-radius: 2px;
+    transition: opacity .12s, color .12s, background .12s;
+}
+
+.file-tab:hover .close,
+.file-tab.active .close {
+    opacity: 1;
+}
+
+.file-tab .close:hover {
+    color: var(--signal);
+    background: var(--surface-2);
+}
+
+.tab-add {
+    background: none;
+    border: none;
+    border-right: 1px solid var(--hairline-2);
+    padding: 0 12px;
+    font-family: var(--sans);
+    font-size: 15px;
+    color: var(--ink-4);
+    cursor: pointer;
+    line-height: 1;
+}
+
+.tab-add:hover {
+    color: var(--ink-2);
+}
+
 /* ── Main grid ──────────────────────────────────────────────────────── */
 .main {
     display: grid;
@@ -565,7 +987,9 @@ body.zen .panels-col {
     background: var(--paper);
     border-right: 1px solid var(--hairline-2);
     display: grid;
-    grid-template-rows: 34px minmax(0, 1fr);
+    /* Head row matches the panels' `.panel-head` (36px) so the editor header and
+     * the mixer/figure headers line up as one strip across the divider. */
+    grid-template-rows: 36px minmax(0, 1fr);
 }
 
 .editor-head {
@@ -603,7 +1027,7 @@ body.zen .panels-col {
 
 .editor-head .label .meta {
     font-family: var(--hand);
-    font-size: 17px;
+    font-size: 16px;
     color: var(--ink-2);
     font-weight: 500;
     transform: translateY(1px) rotate(-1deg);
@@ -648,23 +1072,37 @@ body.zen .panels-col {
     animation: evalFlash 0.5s ease-out forwards;
 }
 
-/* Pattern-step highlight — orange chip per active mini-notation step. */
-.cm-pattern-active {
+/* Pattern-step highlight — solid accent fill over the sounding atom.
+ *
+ * The catch: mini-notation is a string literal, and the `tags.string` rule in
+ * main.js already paints its own `backgroundColor: var(--signal-soft)` on an
+ * INNER span. That inner span sits on top of this mark, so a background set on
+ * `.cm-pattern-active` alone is covered and never shows (only text-decoration,
+ * which paints on the glyphs above all backgrounds, got through). So we style
+ * the inner span directly — the descendant selector outranks the generated
+ * string-tag class on specificity, no !important needed.
+ *
+ * Paint-only (background + color), so the line never reflows as steps mount and
+ * unmount — NO padding/border/margin/font-weight (the original chip's jitter). */
+.cm-pattern-active,
+.cm-pattern-active span {
     background-color: var(--signal);
-    color: var(--ink);
+    color: var(--signal-ink);
     border-radius: 2px;
-    box-shadow: 0 0 0 1px var(--ink);
-    padding: 0 1px;
 }
 
+/* Compile/boot error — an overlay pinned to the bottom edge of the editor, so
+ * it covers only the last lines rather than the whole buffer. Because it can
+ * still hide an end-of-file line, the pane carries a ✕ to collapse it (and the
+ * status bar grows a "show" button to re-surface it). A failed hot-swap keeps
+ * the old engine playing, so this is a non-blocking notice, not a blackout.
+ * `display: none` when hidden. */
 .boot-error {
     position: absolute;
-    inset: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
     z-index: 40;
-    background: rgba(236, 230, 212, 0.94);
-    display: flex;
-    align-items: center;
-    justify-content: center;
 }
 
 .boot-error[hidden] {
@@ -672,29 +1110,87 @@ body.zen .panels-col {
 }
 
 .boot-error-body {
-    max-width: 420px;
-    border: 1.5px solid var(--signal);
-    background: var(--paper);
-    padding: 18px 22px;
-    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.18);
+    /* An orange rule + a tonal step up from the editor's --paper ground mark it
+     * as a floating panel — no blurry drop shadow (foreign to this flat UI).
+     * Caps at 40vh and scrolls vertically; horizontal scroll is confined to the
+     * message (below) so a wide diagnostic never drags the header — and its ✕ —
+     * off the visible edge. */
+    border-top: 1.5px solid var(--signal);
+    background: var(--surface);
+    padding: 10px 14px;
+    max-height: 40vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* Header row: the "! COMPILE ERROR" label on the left, a collapse button on
+ * the right. Collapsing hides the overlay so a line beneath it is reachable;
+ * the status-bar "show" button brings it back. */
+.boot-error-headrow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+/* Compact ✕ close button. */
+.boot-error-collapse {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    display: grid;
+    place-items: center;
+    background: none;
+    border: none;
+    color: var(--ink-3);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0;
+    transition: color 120ms ease;
+}
+
+.boot-error-collapse:hover {
+    color: var(--ink);
 }
 
 .boot-error-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
     font-family: var(--sans);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
-    letter-spacing: 0.18em;
+    letter-spacing: 0.22em;
     text-transform: uppercase;
     color: var(--signal);
-    margin-bottom: 8px;
+}
+
+/* Orange index marker — the same role the editor head's "A" or a panel's "01"
+ * plays, recolored as an error glyph so the pane reads as a first-class head.
+ * A ::before so JS setting the head's textContent (the label) never wipes it. */
+.boot-error-head::before {
+    content: "!";
+    font-family: var(--display);
+    font-style: italic;
+    font-weight: 700;
+    font-size: 15px;
+    line-height: 1;
+    letter-spacing: -0.04em;
 }
 
 .boot-error-msg {
     font-family: var(--mono);
     font-size: 11.5px;
     color: var(--ink);
-    line-height: 1.5;
-    word-break: break-word;
+    line-height: 1.4;
+    /* `pre` (not pre-wrap) keeps the caret column-aligned under its token; the
+     * message itself scrolls horizontally for long lines (so the header above
+     * stays put). */
+    white-space: pre;
+    overflow-x: auto;
 }
 
 /* ── Inline @param slider — pinned to the right of its code line ─────
@@ -754,11 +1250,14 @@ body.zen .panels-col {
 
 /* ── Panels column ──────────────────────────────────────────────────── */
 .panels-col {
+    position: relative;
+    /* anchor for the absolutely-positioned cheatsheet drawer */
     background: var(--surface);
     border-left: 1px solid var(--hairline);
     overflow: hidden;
     display: grid;
-    grid-template-rows: minmax(160px, 42%) minmax(0, 1fr);
+    /* mixer · figure (flexes to fill). */
+    grid-template-rows: minmax(140px, auto) minmax(0, 1fr);
     min-height: 0;
 }
 
@@ -821,9 +1320,16 @@ body.zen .panels-col {
 }
 
 /* ── Mixer ──────────────────────────────────────────────────────────── */
+/* Scrollable channel list. `display: block` deliberately overrides the shared
+ * `.panel-body { display: flex }` — a block scroll-container is the right model
+ * for a vertical list. `max-height` caps it (the mixer's grid track is
+ * `minmax(140px, auto)`, so the height has to be bounded here). No bottom
+ * padding: a scroll container counts its bottom padding as scrollable area, so
+ * any would show as a gap below the last strip at the scroll end. */
 .mixer-body {
+    display: block;
     overflow-y: auto;
-    padding: 8px 0 4px;
+    max-height: 35vh;
 }
 
 /* Six columns: idx · name · slider+vu · m/s · dB. */
@@ -864,17 +1370,6 @@ body.zen .panels-col {
     font-weight: 700;
     font-size: 12px;
     color: var(--ink);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.channel-strip .label .kind {
-    font-family: var(--hand);
-    font-size: 13px;
-    color: var(--ink-3);
-    line-height: 1.1;
-    font-weight: 500;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -990,6 +1485,36 @@ body.zen .panels-col {
     cursor: not-allowed;
 }
 
+/* Live-MIDI arm (docs/midi.md): the MIDI-connector glyph lights when armed and
+   the strip glows — the keyboard now plays this voice, overriding its pattern. */
+.ms-buttons button.arm {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+}
+
+.ms-buttons button.arm svg {
+    width: 14px;
+    height: 14px;
+    display: block;
+}
+
+/* The two armed modes read as how *full* the button is (docs/midi.md):
+   override  = a diagonal HALF fill — live plays *over* the pattern (it's still
+               there underneath);
+   MIDI-only = a FULL fill — the pattern is muted, only the keyboard sounds.
+   The note keeps the ink colour (not overridden) so it reads on the unfilled
+   half; the accent border marks it armed in either mode. */
+.ms-buttons button.on.arm {
+    background: linear-gradient(135deg, var(--signal) 0 50%, var(--paper) 50% 100%);
+    border-color: var(--signal);
+}
+
+.ms-buttons button.on.only.arm {
+    background: var(--signal);
+}
+
 .db-readout {
     font-family: var(--mono);
     font-size: 10.5px;
@@ -1006,10 +1531,17 @@ body.zen .panels-col {
     color: var(--ink);
 }
 
+/* Pinned to the bottom of the scroll viewport: voice strips scroll above it,
+ * master stays put. Sticky (not a separate container) keeps the DOM flat — the
+ * opaque `--surface-2` background + z-index stop scrolling strips bleeding
+ * through, and the shadow lifts it when there's content scrolling underneath. */
 .channel-strip.master-strip {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
     border-top: 1.5px solid var(--ink);
     background: var(--surface-2);
-    margin-top: 6px;
+    box-shadow: 0 -6px 12px -6px rgba(0, 0, 0, 0.18);
     border-bottom: none;
 }
 
@@ -1188,44 +1720,14 @@ body.zen .panels-col {
     display: block;
 }
 
-.fig-blank {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    text-align: center;
-}
-
-.fig-blank .glyph {
-    font-family: var(--display);
-    font-style: italic;
-    font-size: 30px;
-    color: var(--ink-4);
-}
-
-.fig-blank .msg {
-    font-family: var(--sans);
-    font-size: 11px;
-    color: var(--ink-3);
-    max-width: 320px;
-    line-height: 1.5;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    font-weight: 600;
-}
-
 .figure-cap {
     border-top: 1px solid var(--hairline-2);
     padding: 8px 16px;
-    font-family: var(--sans);
-    font-size: 10px;
+    font-family: var(--hand);
+    font-size: 16px;
     color: var(--ink-3);
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    font-weight: 600;
-    line-height: 1;
+    font-weight: 500;
+    line-height: 1.1;
     display: flex;
     align-items: center;
     background: var(--surface);
@@ -1294,10 +1796,19 @@ body.zen .panels-col {
 
 /* ── Status bar — dark with orange accents ──────────────────────────── */
 .status {
+    /* A dark slab in light mode (inverted from the cream chrome) and a raised
+     * dark panel in dark mode — NOT the bright bar the --ink/--paper swap would
+     * otherwise produce. The foreground stays constant (cream text, dark ink on
+     * the orange chip) in both themes, so it's pinned to local vars that don't
+     * flip; only the ground tone changes per theme (body.theme-dark .status). */
+    --status-fg: #ece6d4;
+    /* cream text — stable across themes */
+    --status-kbd-ink: #141414;
+    /* dark ink on the orange kbd chip — stable */
     display: flex;
     align-items: center;
     background: var(--ink);
-    color: var(--paper);
+    color: var(--status-fg);
     border-top: 1.5px solid var(--ink);
     padding: 0 22px;
     height: var(--status-h);
@@ -1305,6 +1816,13 @@ body.zen .panels-col {
     font-size: 10.5px;
     gap: 22px;
     overflow: hidden;
+}
+
+body.theme-dark .status {
+    /* Dark mode: a raised dark panel with a subtle hairline, not the cream bar
+     * the --ink/--paper inversion would produce. */
+    background: var(--surface-2);
+    border-top-color: var(--hairline);
 }
 
 .status .chunk {
@@ -1325,7 +1843,7 @@ body.zen .panels-col {
 }
 
 .status .chunk .val {
-    color: var(--paper);
+    color: var(--status-fg);
 }
 
 .status .chunk .val .dot {
@@ -1342,6 +1860,13 @@ body.zen .panels-col {
     background: var(--ink-3);
 }
 
+/* DSP-load over ~80% of the render budget — flag it in the brand signal so a
+ * heavy patch reads at a glance without adding a second alarm colour. */
+.status .chunk .val.warn {
+    color: var(--signal);
+    font-weight: 600;
+}
+
 .status .chunk .val.err {
     color: var(--signal);
 }
@@ -1351,17 +1876,22 @@ body.zen .panels-col {
 }
 
 .status .log {
-    flex: 1 1 0%;
+    flex: 0 1 auto;
     min-width: 0;
     font-family: var(--hand);
-    font-size: 17px;
-    color: var(--paper);
+    font-size: 16px;
+    color: var(--status-fg);
     line-height: 1;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
     font-weight: 500;
+    /* Caveat is a script face whose final glyph ink overhangs its advance
+     * width; pad the right so `overflow: hidden` (the box now shrink-wraps the
+     * text) doesn't clip the last letter — e.g. the d in "stopped" /
+     * "hot-swapped". */
     padding-left: 4px;
+    padding-right: 8px;
 }
 
 .status .log .ts {
@@ -1370,6 +1900,37 @@ body.zen .panels-col {
     font-size: 10px;
     margin-right: 6px;
     font-weight: 400;
+}
+
+/* Dynamic open icon next to the log — appears only while a compile error is
+ * collapsed; re-surfaces the error pane. */
+.status .log-action {
+    flex: 0 0 auto;
+    margin-left: 4px;
+    width: 18px;
+    height: 18px;
+    display: grid;
+    place-items: center;
+    background: none;
+    border: none;
+    color: var(--signal);
+    cursor: pointer;
+    padding: 0;
+    transition: color 120ms ease;
+}
+
+.status .log-action:hover {
+    color: var(--status-fg);
+}
+
+.status .log-action svg {
+    width: 12px;
+    height: 12px;
+    display: block;
+}
+
+.status .log-action[hidden] {
+    display: none;
 }
 
 .status .kbd {
@@ -1383,16 +1944,319 @@ body.zen .panels-col {
     font-size: 9px;
     letter-spacing: 0.24em;
     text-transform: uppercase;
-    color: var(--paper);
+    color: var(--status-fg);
 }
 
 .status .kbd kbd {
     font-family: var(--mono);
     font-size: 9.5px;
     background: var(--signal);
-    color: var(--ink);
+    color: var(--status-kbd-ink);
     padding: 1px 5px;
     font-weight: 700;
     letter-spacing: 0;
     border-radius: 2px;
+}
+
+/* ── MIDI — an I/O status chunk, same family as SR / Buf / Eng ───────── */
+/* The outer .chunk.midi groups the clickable toggle and the (hidden-until-
+   playable) target select into one ledger entry. The toggle carries .lbl /
+   .val / .dot, so it inherits the shared chunk glyph styling. */
+.status .midi {
+    white-space: nowrap;
+}
+
+.status .midi-toggle {
+    appearance: none;
+    -webkit-appearance: none;
+    background: none;
+    border: 0;
+    margin: 0;
+    padding: 0;
+    /* Buttons don't inherit font — without this the .val falls back to the UA
+       default face instead of the bar's --mono, breaking the SR/Buf/Eng match. */
+    font: inherit;
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    cursor: pointer;
+}
+
+/* Hover brightens the value to full cream — a theme-stable "this is
+   clickable" cue. (Can't lean on --signal-soft here: like --ink-4 it flips
+   to a near-black brown in dark mode, but the status bar is dark in *both*
+   themes, so the bar sticks to --status-fg / --ink-3 / --signal only.) */
+.status .midi-toggle:hover:not(:disabled) .val {
+    color: var(--status-fg);
+}
+
+/* off — not yet enabled: dim value + grey dot, like Eng when idle */
+.status .midi-toggle.idle .val {
+    color: var(--ink-3);
+}
+
+.status .midi-toggle.idle .dot {
+    background: var(--ink-3);
+}
+
+/* on — device connected: full value + signal dot */
+.status .midi-toggle.on .dot {
+    background: var(--signal);
+}
+
+/* unsupported (Safari/iOS): muted, no dot, non-interactive */
+.status .midi-toggle.na {
+    cursor: default;
+}
+
+.status .midi-toggle.na .val {
+    color: var(--ink-3);
+}
+
+.status .midi-toggle.na .dot {
+    display: none;
+}
+
+.status .midi-toggle:disabled {
+    cursor: default;
+}
+
+/* target select — appears only once the patch exposes a note/trig port */
+.status .midi-target {
+    position: relative;
+    /* anchor for the accent caret overlay */
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: 9px;
+    padding-left: 9px;
+    border-left: 1px solid var(--ink-3);
+}
+
+.status .midi-target[hidden] {
+    display: none;
+}
+
+.status .midi-target .pre {
+    font-family: var(--sans);
+    font-weight: 700;
+    font-size: 8px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+}
+
+.status .midi-target .sel {
+    appearance: none;
+    -webkit-appearance: none;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--status-fg);
+    /* faint chip fill — --status-fg (#ece6d4) at 8% */
+    background: rgba(236, 230, 212, 0.08);
+    border: 1px solid var(--ink-3);
+    border-radius: 3px;
+    padding: 1px 18px 1px 6px;
+    cursor: pointer;
+}
+
+.status .midi-target .sel:hover {
+    border-color: var(--signal);
+}
+
+/* ▾ caret painted in the live accent via a mask, so it tracks both the theme
+   and the runtime accent picker. A baked-in SVG `fill` would freeze it orange
+   while the dot and hover-border beside it follow var(--signal). */
+.status .midi-target::after {
+    content: "";
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    width: 8px;
+    height: 6px;
+    transform: translateY(-50%);
+    background: var(--signal);
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='6'%3E%3Cpath d='M0 0l4 6 4-6z'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='6'%3E%3Cpath d='M0 0l4 6 4-6z'/%3E%3C/svg%3E") center / contain no-repeat;
+    pointer-events: none;
+}
+
+/* ─────────────────────────── LEARN MODAL ───────────────────────────
+   The 8-lesson primer, floated over the live playground as an iframe.
+   The scrim dims the session; the frame is the modal card. The iframe
+   carries its own (paper) skin + isolated engine — see learn/index.html. */
+.learn-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(20, 18, 12, 0.46);
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+}
+
+.learn-overlay[hidden] {
+    display: none;
+}
+
+.learn-frame {
+    width: min(940px, 94vw);
+    height: 91vh;
+    border: 1.5px solid var(--ink);
+    background: var(--paper);
+    box-shadow: 0 40px 90px -30px rgba(20, 18, 12, 0.6);
+}
+
+/* ─────────────────────────── ABOUT MODAL ───────────────────────────
+   A small card floated over the session from the wordmark / version pill
+   (the two "about" doors). Same scrim as Learn; placeholder content. */
+.about-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(20, 18, 12, 0.46);
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+}
+
+.about-overlay[hidden] {
+    display: none;
+}
+
+.about-card {
+    position: relative;
+    width: min(420px, 92vw);
+    padding: 38px 40px 30px;
+    background: var(--paper);
+    border: 1.5px solid var(--ink);
+    box-shadow: 0 40px 90px -30px rgba(20, 18, 12, 0.6);
+    text-align: left;
+}
+
+.about-close {
+    position: absolute;
+    top: 12px;
+    right: 14px;
+    width: 26px;
+    height: 26px;
+    background: none;
+    border: none;
+    font-family: var(--sans);
+    font-size: 20px;
+    line-height: 1;
+    color: var(--ink-3);
+    cursor: pointer;
+    transition: color 120ms ease;
+}
+
+.about-close:hover {
+    color: var(--signal);
+}
+
+.about-mark {
+    font-family: var(--display);
+    font-weight: 700;
+    font-style: italic;
+    font-size: 34px;
+    line-height: 1;
+    letter-spacing: -0.035em;
+    color: var(--ink);
+    display: inline-flex;
+    align-items: baseline;
+}
+
+.about-mark .dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    background: var(--signal);
+    border-radius: 50%;
+    margin: 0 3px 4px;
+}
+
+.about-mark .tld {
+    font-weight: 400;
+    color: var(--ink-2);
+    font-size: 0.6em;
+    margin-left: 2px;
+    align-self: flex-end;
+    margin-bottom: 3px;
+}
+
+.about-ver {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--ink-3);
+    margin: 8px 0 16px;
+}
+
+.about-blurb {
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--ink-2);
+    margin-bottom: 18px;
+}
+
+.about-links {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    margin-bottom: 20px;
+}
+
+.about-link {
+    background: none;
+    border: none;
+    padding: 0;
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 12.5px;
+    color: var(--signal);
+    cursor: pointer;
+    text-align: left;
+    transition: color 120ms ease;
+}
+
+.about-link:hover {
+    color: var(--signal-deep);
+}
+
+.about-ack {
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--ink-3);
+    margin-bottom: 18px;
+}
+
+.about-credit {
+    border-top: 1px solid var(--hairline-2);
+    padding-top: 12px;
+    font-family: var(--sans);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    margin-bottom: 7px;
+}
+
+.about-credit a {
+    color: var(--signal);
+    text-decoration: none;
+    transition: color 120ms ease;
+}
+
+.about-credit a:hover {
+    color: var(--signal-deep);
+    text-decoration: underline;
+}
+
+.about-foot {
+    font-family: var(--hand);
+    font-size: 16px;
+    color: var(--ink-3);
 }

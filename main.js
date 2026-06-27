@@ -7,8 +7,7 @@
 //   - Boot the AudioWorklet, compile the wasm once, hot-swap on eval.
 //   - Build the mixer from the worklet's voice list; VU meters are driven
 //     by the {levels} postMessage, knobs/M/S by {set_voice} messages.
-//   - Master-only spectrum + oscilloscope off an AnalyserNode; a third
-//     figure tab shows the patch block diagram (blank for scene files).
+//   - Master-only spectrum + oscilloscope off an AnalyserNode.
 //
 // CodeMirror 6 has no in-tree bundler, so it loads from esm.sh with
 // ?deps pinned so view/commands/language all share one @codemirror/state.
@@ -25,7 +24,7 @@ import {
   StreamLanguage, syntaxHighlighting, HighlightStyle, bracketMatching,
 } from "https://esm.sh/@codemirror/language@6?deps=@codemirror/state@6.6.0";
 import { tags } from "https://esm.sh/@lezer/highlight@1";
-import initWasm, { version as fugueVersion } from "./fugue_wasm.js";
+import initWasm, { version as fugueVersion, Engine } from "./fugue_wasm.js";
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -50,7 +49,7 @@ function createStore(init) {
 
 const store = createStore({
   activeFile: null,        // filename string
-  figTab: "spectrum",      // spectrum | scope | diagram
+  figTab: "spectrum",      // spectrum | scope
   frozen: false,
   specInteg: 200,          // ms — temporal averaging
   specSmooth: 20,          // %  — spectral smoothing
@@ -58,7 +57,11 @@ const store = createStore({
   scopeWindow: 14,         // ms — scope display window (post-trigger)
   voices: {},              // name -> { gain, mute, solo }; plus 'master'
   voiceOrder: [],          // index -> voice name (from the worklet ack)
+  armable: new Set(),      // voice names that can take live MIDI (docs/midi.md)
+  armedVoice: null,        // the voice the keyboard plays, or null
+  armedMode: "override",   // "override" (pattern + live) | "midi-only" (live only)
   engineState: "idle",     // idle | loading | running | paused | error
+  bouncing: false,         // offline WAV bounce in progress (transient — set by bounceToWav)
 });
 
 // File contents + dirty flags live outside the reactive store — they
@@ -110,7 +113,7 @@ async function loadPatches() {
   }
   // Final fallback: a literal DC patch so the page still boots if the
   // manifest fetch fails (offline, mid-deploy, dev typo).
-  return { "fallback.fugue": "process = 0.1;\n" };
+  return { "fallback.fugue": "process { out = 0.1 }\n" };
 }
 
 /* ───────────────────────────────────────────────────────────────────
@@ -126,10 +129,16 @@ let wasmCompiled = null;
 let freqData = null;     // Float32Array — analyser frequency bins (dB)
 let timeData = null;     // Float32Array — analyser time-domain samples
 let latestLevels = null; // Float32Array — [peak,rms] per voice + master
-// Uint32Array from the worklet's {active} tap: one [start,end] pair per
-// voice (flattened). (0,0) = rest/unbound. Drives the Strudel-style
-// pattern-step highlight — cleared on hot-swap, set on every {levels} push.
+// Uint32Array from the worklet's {active} tap: a flat, packed list of
+// [start,end] absolute-byte pairs — one per atom sounding this block, across
+// all voices (a chord-name lights once; no rest sentinels). Drives the
+// Strudel-style pattern-step highlight — cleared on hot-swap, replaced on
+// every {levels} push.
 let latestActive = null;
+// DSP load (render time / block budget, 0..1) from the worklet's {cpu} field;
+// null until the first worklet report. Rendered to the `Load` status chunk by
+// frame(); see processor.js for how it's measured.
+let latestCpu = null;
 
 async function compileWasmOnce() {
   if (wasmCompiled) return wasmCompiled;
@@ -152,18 +161,28 @@ async function ensureWasmInit() {
   if (!wasmInitPromise) {
     wasmInitPromise = (async () => {
       const mod = await compileWasmOnce();
-      await initWasm({ module: mod });
+      // Reuse the already-compiled module — the key MUST be `module_or_path`
+      // for wasm-bindgen ≥0.2.93 (it was `module` before the rename). The
+      // wrong key is silently dropped, so init falls back to its default
+      // `new URL(...wasm)` and fetches + recompiles the 874 KB module a
+      // second time on every uncached load. Positional `initWasm(mod)` also
+      // works (as processor.js does) but trips a deprecation warning.
+      await initWasm({ module_or_path: mod });
     })();
   }
   return wasmInitPromise;
 }
 
 async function paintVersionPill() {
-  const el = $("#version-pill");
-  if (!el) return;
+  const pill = $("#version-pill");
+  const txt = $("#version-text");
+  if (!pill || !txt) return;
   try {
     await ensureWasmInit();
-    el.textContent = `v${fugueVersion()}`;
+    // Write only the version text node — the pill also holds the hover-only
+    // "· about" tail, which textContent on the pill would wipe.
+    txt.textContent = `v${fugueVersion()}`;
+    pill.classList.remove("cold");
   } catch (err) {
     console.error("version() failed:", err);
   }
@@ -203,7 +222,6 @@ function unlockIosAudioSession() {
 async function start() {
   if (audioCtx) return;
   store.set({ engineState: "loading" });
-  setEngineState("loading", "idle");
   // iOS Safari mutes Web Audio when the hardware silent switch is on
   // (its audio session defaults to "ambient"). An HTMLMediaElement that
   // is actively playing — even silently — elevates the session to
@@ -224,7 +242,7 @@ async function start() {
   await audioCtx.audioWorklet.addModule("./worklet-polyfill.js");
   await audioCtx.audioWorklet.addModule("./processor.js");
   const wasmModule = await compileWasmOnce();
-  const source = fileContents[store.get().activeFile] || "process = 0.1;\n";
+  const source = fileContents[store.get().activeFile] || "process { out = 0.1 }\n";
   pendingEngineSource = source; // promoted to engineSource on the {ok} ack
   workletNode = new AudioWorkletNode(audioCtx, "fugue-processor", {
     numberOfInputs: 0,
@@ -257,15 +275,46 @@ async function teardown() {
   audioCtx = workletNode = masterGainNode = analyser = null;
 }
 
-function showBootError(msg) {
+// `msg` is the full rendered diagnostic (message + line:col + caret block) —
+// shown verbatim in the monospace strip. `head` labels the context.
+function showBootError(msg, head = "compile error") {
   const el = $("#boot-error");
   if (!el) return;
+  const headEl = $("#boot-error-head");
+  if (headEl) headEl.textContent = head;
   $("#boot-error-msg").textContent = msg;
   el.hidden = false;
+  // Pane is on screen → the status-bar "show" affordance isn't needed.
+  setErrorToggle(false);
 }
+
+// Collapse the pane but keep the error addressable: the status-bar "show"
+// button re-surfaces it. Distinct from hideBootError, which fully clears on a
+// successful build.
+function collapseBootError() {
+  const el = $("#boot-error");
+  if (el) el.hidden = true;
+  setErrorToggle(true);
+}
+
 function hideBootError() {
   const el = $("#boot-error");
   if (el) el.hidden = true;
+  setErrorToggle(false);
+}
+
+// The status-bar "show" button is visible only while a compile error is
+// collapsed (error still active, pane hidden by the user).
+function setErrorToggle(visible) {
+  const btn = $("#error-toggle");
+  if (btn) btn.hidden = !visible;
+}
+
+// wasm-bindgen's `String(jsError)` prepends its own "Error: " wrapper around
+// our rendered diagnostic (which already starts with "error:"). Strip the
+// wrapper so the strip reads `error: parse: …`, not `Error: error: parse: …`.
+function unwrapErr(e) {
+  return String(e).replace(/^Error:\s*/, "");
 }
 
 async function toggle() {
@@ -275,10 +324,11 @@ async function toggle() {
       hideBootError();
     } catch (err) {
       store.set({ engineState: "error" });
-      const line = String(err).split("\n")[0];
-      logEvent(`engine load failed: ${line}`);
-      showBootError(line);
-      // Full stack to DevTools — the banner only shows the first line.
+      // The boot-error pane carries the full diagnostic; the status log stays a
+      // terse status so the two surfaces don't duplicate the error text.
+      showBootError(unwrapErr(err), "engine load failed");
+      logEvent("engine load failed");
+      // Full stack to DevTools — the strip shows the rendered diagnostic.
       console.error("start() failed:", err);
       await teardown();
     }
@@ -334,66 +384,271 @@ function replayMixer() {
   });
 }
 
+/* ───────────────────────────────────────────────────────────────────
+   MIDI keyboard — a playground input device, NOT a language feature
+   (CLAUDE.md §8/§9). The keyboard plays the *armed* mixer voice; the engine
+   owns note priority and the per-voice arm/override (docs/midi.md), so this
+   module only (a) connects Web MIDI and forwards raw note events to the
+   worklet, and (b) drives the status-bar connection chunk. The arm control
+   itself lives on each mixer strip (see makeStrip / toggleArm).
+
+   Web MIDI is Chromium + Firefox only — Safari/iOS has no support, so the
+   chunk degrades to `n/a` there.
+   ─────────────────────────────────────────────────────────────────── */
+let midiAccess = null;        // MIDIAccess, once the user enables input
+
+const midiSupported = () => typeof navigator !== "undefined" && !!navigator.requestMIDIAccess;
+
+async function enableMidi() {
+  if (!midiSupported()) return;
+  try {
+    midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+  } catch (err) {
+    setMidiStatus("denied", "idle");
+    console.error("requestMIDIAccess failed:", err);
+    return;
+  }
+  attachMidiInputs();
+  // Hot-plugged keyboards: re-attach + re-count as devices come and go.
+  midiAccess.onstatechange = () => {
+    attachMidiInputs();
+    refreshMidiUI();
+  };
+  refreshMidiUI();
+}
+
+function attachMidiInputs() {
+  if (!midiAccess) return;
+  for (const input of midiAccess.inputs.values()) input.onmidimessage = onMidiMessage;
+}
+
+function midiInputCount() {
+  if (!midiAccess) return 0;
+  let n = 0;
+  for (const _ of midiAccess.inputs.values()) n++;
+  return n;
+}
+
+// Forward raw note events to the worklet. The engine resolves note priority
+// and applies them to the armed voice (docs/midi.md) — the page holds no note
+// state. Channel/velocity are ignored for now (mono + poly-by-allocation).
+function onMidiMessage(e) {
+  const [status, d1, d2] = e.data;
+  const kind = status & 0xf0;
+  if (kind === 0x90 && d2 > 0) {
+    workletNode?.port.postMessage({ note_on: d1 });
+  } else if (kind === 0x80 || (kind === 0x90 && d2 === 0)) {
+    workletNode?.port.postMessage({ note_off: d1 });
+  } else if (kind === 0xb0 && (d1 === 123 || d1 === 120)) {
+    workletNode?.port.postMessage({ all_notes_off: true });
+  }
+}
+
+// The MIDI status chunk carries a leading dot (like `#engine-state`); writing
+// textContent would blow that span away, so rebuild it and toggle the kind on
+// the chunk button. kind: "idle" (grey dot) | "on" (signal dot) | "na" (no dot).
+function setMidiStatus(label, kind /* "idle" | "on" | "na" */) {
+  const el = $("#midi-status");
+  const chunk = $("#midi-enable");
+  if (el) el.innerHTML = `<span class="dot"></span>${label}`;
+  if (chunk) {
+    chunk.classList.remove("idle", "on", "na");
+    chunk.classList.add(kind);
+  }
+}
+
+// Reconcile the status chunk: support, connection, device count. Target
+// selection moved onto the mixer strips (the per-voice arm, docs/midi.md).
+function refreshMidiUI() {
+  const enableBtn = $("#midi-enable");
+  if (!enableBtn) return;
+  if (!midiSupported()) {
+    enableBtn.disabled = true;
+    setMidiStatus("n/a", "na");
+    return;
+  }
+  if (!midiAccess) {
+    setMidiStatus("off", "idle");
+  } else {
+    const n = midiInputCount();
+    setMidiStatus(n === 0 ? "no device" : n === 1 ? "1 device" : `${n} devices`, "on");
+  }
+}
+
+function bindMidi() {
+  $("#midi-enable")?.addEventListener("click", enableMidi);
+  refreshMidiUI();
+}
+
+// ── Per-voice arm (docs/midi.md) ──────────────────────────────────────────
+// The keyboard drives exactly one voice at a time. A strip's arm button cycles
+// off → override → MIDI-only → off; arming is exclusive, lazily connects MIDI,
+// and is re-asserted to the engine on every (re)build (a cold build resets it).
+//   override  — the pattern plays; live preempts while a key is held.
+//   MIDI-only — the pattern is muted; only the keyboard sounds.
+
+function toggleArm(name) {
+  const s = store.get();
+  let { armedVoice, armedMode } = s;
+  if (armedVoice !== name) {
+    armedVoice = name;            // off → override
+    armedMode = "override";
+  } else if (armedMode === "override") {
+    armedMode = "midi-only";      // override → MIDI-only
+  } else {
+    armedVoice = null;            // MIDI-only → off
+    armedMode = "override";
+  }
+  store.set({ armedVoice, armedMode });
+  // Arming implies you want to play — request MIDI access if not yet granted.
+  if (armedVoice && !midiAccess) enableMidi();
+  applyArm();
+  refreshArmUI();
+}
+
+// Push the current arm to the engine: voice index (or -1 to disarm) + the mode.
+function applyArm() {
+  const s = store.get();
+  const idx = s.armedVoice ? s.voiceOrder.indexOf(s.armedVoice) : -1;
+  workletNode?.port.postMessage({ arm: idx, midi_only: s.armedMode === "midi-only" });
+}
+
+// Light the armed voice's arm button: override fills the accent, MIDI-only fills
+// dark (it mutes the pattern, echoing Mute). The button is the only "armed"
+// signal, like solo; the overridden pattern stops highlighting on its own (the
+// engine suppresses the active-span tap for the armed voice).
+function refreshArmUI() {
+  const armed = store.get().armedVoice;
+  const midiOnly = store.get().armedMode === "midi-only";
+  for (const [name, rec] of Object.entries(channels)) {
+    if (rec.isMaster) continue;
+    const on = name === armed;
+    rec.armBtn?.classList.toggle("on", on);
+    rec.armBtn?.classList.toggle("only", on && midiOnly);
+  }
+}
+
 function handleWorkletMessage(data) {
   if (data?.levels) {
     latestLevels = data.levels;
     if (data.active instanceof Uint32Array) latestActive = data.active;
+    if (typeof data.cpu === "number") latestCpu = data.cpu;
     return;
   }
   if (data?.ok) {
+    // A successful build clears any lingering compile-error strip.
+    hideBootError();
     // The worklet compiled `pendingEngineSource` — adopt it as the
     // coordinate frame for the pattern-step highlight (rebuilds the
     // byte→char map, resets edit tracking, forces a re-dispatch).
     promoteEngineSource();
-    if (Array.isArray(data.voices)) onVoiceList(data.voices);
+    if (Array.isArray(data.voices)) onVoiceList(data.voices, data.armable);
     if (data.ok === "loaded" || data.ok === "loaded-on-edit") {
       store.set({ engineState: "running" });
-      setEngineState("running", "running");
       replayMixer();
       logEvent(data.ok === "loaded-on-edit" ? "reloaded on edit" : "loaded");
     } else if (data.ok === "swapped") {
-      setEngineState("running", "running");
+      // A hot-swap doesn't change transport — a swap while paused must stay
+      // paused. But a successful swap does clear a stale compile-error dot,
+      // so resolve the state from the live context rather than forcing it.
+      store.set({ engineState: audioCtx?.state === "running" ? "running" : "paused" });
       logEvent("hot-swapped");
     }
     return;
   }
   if (data?.error) {
     store.set({ engineState: "error" });
-    setEngineState("error", "err");
-    logEvent(`error: ${String(data.error).split("\n")[0]}`);
+    // The strip shows the full rendered diagnostic (line:col + caret); the
+    // status log stays a terse status — no point echoing the error text in
+    // both, and the hand-font log shouldn't quote a monospace diagnostic. The
+    // orange Eng chunk already flags the error state. The editor stays visible
+    // above the strip so the user can fix the source — and on a hot-swap
+    // failure the old engine keeps playing, so this is a non-blocking notice.
+    showBootError(unwrapErr(data.error), "compile error");
+    logEvent("compile error");
   }
 }
 
 // The worklet reports voice names on every (re)build. Reconcile the store
 // by name so gain/mute/solo survive an edit, then rebuild the strips.
-function onVoiceList(names) {
+function onVoiceList(names, armable) {
   const prev = store.get().voices;
   const voices = {};
   for (const n of names) voices[n] = prev[n] || { gain: 1, mute: false, solo: false };
   voices.master = prev.master || { gain: 1, mute: false, solo: false };
-  store.set({ voiceOrder: names, voices });
+  // `armable[]` is parallel to `names` — keep the armable voices as a name set.
+  const armableSet = new Set((armable || []).flatMap((ok, i) => (ok ? [names[i]] : [])));
+  // A rebuild may drop or un-arm the previously-armed voice.
+  let armed = store.get().armedVoice;
+  if (armed && !armableSet.has(armed)) armed = null;
+  store.set({ voiceOrder: names, voices, armable: armableSet, armedVoice: armed });
   buildMixer(names);
-  renderDiagram(); // refresh the scene-file voice count now that it's known
+  refreshArmUI();
+  applyArm(); // re-assert the arm to the freshly-(re)built engine
 }
 
 /* ───────────────────────────────────────────────────────────────────
    CodeMirror 6 — editorial theme + a small fugue StreamLanguage. The
    eval-flash is a line Decoration driven by a StateField (Strudel idiom).
    ─────────────────────────────────────────────────────────────────── */
+// v0.7 surface keywords: process / feedback / out / param / import|from|as
+// (the v0.6 `fugue` block keyword retired); 4 top-level config names
+// (tempo / sample_rate / channels / midi), and the stdlib names — stage
+// primitives + pattern combinators + math + HOFs.
+const FUGUE_KEYWORDS = /^(?:process|feedback|out|param|import|from|as)\b/;
+const FUGUE_CONFIG   = /^(?:tempo|sample_rate|channels|midi)\b/;
+const FUGUE_STDLIB = new Set([
+  // oscillators
+  "sine","tri","saw","square","pulse","phasor","noise","noise_pink",
+  // filters
+  "lpf","hpf","bpf","peak","ladder","smooth",
+  // envelopes
+  "ar","adsr","decay","env_follow","ramp",
+  // dynamics
+  "tanh","comp","tape_sat","bit_crush",
+  // delays
+  "delay","delay_frac","delay_thiran","delay_mod","allpass","comb_ff",
+  // reverbs
+  "fdn4","fdn8","fdn16","plate","freeverb",
+  // modulation
+  "lfo","vibrato","chorus","phaser","flanger","tremolo",
+  // pitch / physical / drums
+  "pitch_shift","karplus","kick","snare","hat",
+  // math / samples / stereo
+  "sin","cos","exp","mix","clamp","sample","play","scale",
+  "pan","width","mid_side","from_mid_side","stereo",
+  // HOFs + matrix helpers
+  "par","sum","seq","prod","dot","matvec","matmat","norm",
+  "hadamard","householder","identity","diag",
+  // pattern combinators
+  "pure","silence","fmap","cat","fastcat","stack",
+  "fast","slow","rev","every","off","jux","palindrome","iter",
+  "late","early","degrade","degrade_by","octave","voicing",
+]);
+
 const fugueLang = StreamLanguage.define({
   name: "fugue",
   token(stream) {
     if (stream.eatSpace()) return null;
     if (stream.match("//")) { stream.skipToEnd(); return "comment"; }
-    if (stream.match(/^@\w+/)) return "meta";                       // @param, @transport
     if (stream.match(/^"(?:[^"\\]|\\.)*"/)) return "string";        // mini-notation
     if (stream.match(/^[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/)) { // number + unit
       stream.match(/^(?:kHz|Hz|ms|us|s|dB|bpm|rad)\b/);
       return "number";
     }
-    if (stream.match(/^(?:voice|scene|patch|let|in|process|fn)\b/)) return "keyword";
-    if (stream.match(/^[A-Za-z_][A-Za-z0-9_]*/)) return "variableName";
-    if (stream.match(/^(?:\|>|[-+*/=<>().,;:{}])/)) return "operator";
+    if (stream.match(FUGUE_KEYWORDS)) return "keyword";
+    if (stream.match(FUGUE_CONFIG))   return "meta";                // top-level config
+    if (stream.match(/^(?:\|>|->)/)) return "operator";            // |> compose, -> route
+    const ident = stream.match(/^[A-Za-z_][A-Za-z0-9_]*/);
+    if (ident) {
+      const word = ident[0];
+      if (FUGUE_STDLIB.has(word)) return "builtin";
+      // dotted stdlib: param.log, midi.cc, midi.note, etc.
+      const dot = stream.match(/^\.[A-Za-z_][A-Za-z0-9_]*/);
+      if (dot && (word === "param" || word === "midi" || word === "ui")) return "builtin";
+      return "variableName";
+    }
+    if (stream.match(/^[-+*/=<>().,;:{}\[\]]/)) return "operator";
     stream.next();
     return null;
   },
@@ -407,6 +662,7 @@ const fugueHighlight = HighlightStyle.define([
   { tag: tags.string, color: "var(--ink)", backgroundColor: "var(--signal-soft)" },
   { tag: tags.number, color: "var(--ink)", fontWeight: "500" },
   { tag: tags.variableName, color: "var(--ink)" },
+  { tag: tags.standard(tags.variableName), color: "var(--ink-2)" },
   { tag: tags.operator, color: "var(--ink-2)" },
 ]);
 
@@ -426,8 +682,27 @@ const editorialTheme = EditorView.theme({
   ".cm-activeLineGutter": { backgroundColor: "transparent", color: "var(--signal)", fontWeight: "700", fontStyle: "normal" },
   ".cm-activeLine": { backgroundColor: "rgba(255, 85, 29, 0.05)", boxShadow: "inset 3px 0 0 var(--signal)" },
   "&.cm-focused .cm-cursor": { borderLeftColor: "var(--signal)", borderLeftWidth: "2px" },
+  // Selection is drawn in its own layer that CM parks BEHIND the text (z-index
+  // -2). Two problems with the old `--signal-soft` fill: it's the exact colour
+  // of the string backing (so selecting a pattern showed nothing), and behind
+  // the string's opaque backing it was occluded anyway. Pull the layer in FRONT
+  // of the content and wash it with a translucent accent (`--signal-sel`,
+  // recomputed per-accent in applyAccentVars) — readable through the text, and
+  // visible over the string backings.
+  //
+  // `!important` is load-bearing: CM's base theme sets both the layer z-index
+  // and the selection colour, and plain theme values lose to it (verified in a
+  // headless repro — without it the computed values stayed at CM's -2 / default
+  // lavender, and the selection was invisible).
+  //
+  // `pointerEvents: none` is REQUIRED now that the layer is in front: CM leaves
+  // the layer hit-testable (computed `auto`), so an in-front selection rect
+  // would swallow clicks/drags on the inline @param knob widgets it overlaps.
+  // The cursor layer is pointer-events:none for the same reason; the rects
+  // inherit it. (No !important needed — CM sets no pointer-events here.)
+  ".cm-selectionLayer": { zIndex: "1 !important", pointerEvents: "none" },
   ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
-    backgroundColor: "var(--signal-soft)",
+    backgroundColor: "var(--signal-sel) !important",
   },
 }, { dark: false });
 
@@ -461,11 +736,11 @@ const flashField = StateField.define({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-// Pattern-step highlight — a mark Decoration over the mini-notation step
-// each voice is currently playing (Strudel's live-step idiom). The rAF
-// loop recomputes the active ranges from the transport phase + the
-// worklet's step spans and pushes a fresh set through `setPatternHl`
-// whenever a step boundary is crossed.
+// Pattern-step highlight — a mark Decoration over the mini-notation atoms
+// currently sounding (Strudel's live-step idiom). The rAF loop maps the
+// worklet's active-span tap (absolute `.fugue` byte ranges) onto live-doc
+// positions and pushes a fresh set through `setPatternHl` whenever the set
+// of lit atoms changes.
 const setPatternHl = StateEffect.define();
 const patternHlMark = Decoration.mark({ class: "cm-pattern-active" });
 const patternHlField = StateField.define({
@@ -499,11 +774,23 @@ const patternHlField = StateField.define({
 
 // Unit suffix → SI factor. set_param expects base units (Hz, seconds);
 // the editor shows surface units (kHz, ms, …). Real params are unitless.
-const UNIT_SI = { Hz: 1, kHz: 1e3, ms: 1e-3, us: 1e-6, s: 1, dB: 1, rad: 1 };
+// Suffixes are case-sensitive, SI-spelled: `Hz`, `kHz`, `dB` capitalised.
+const UNIT_SI = {
+  Hz: 1, kHz: 1e3,
+  ms: 1e-3, us: 1e-6, s: 1,
+  dB: 1, rad: 1, bpm: 1,
+};
 
-// One @param line: prefix, name, ': ', kind, ' = ', number, optional unit.
-const PARAM_RE =
+// One v0.3 @param line: `@param name: Kind = default [unit] [...]`.
+const PARAM_RE_V3 =
   /^(\s*@param\s+)([A-Za-z_]\w*)(\s*:\s*)(Freq|Time|Real|Bool)(\s*=\s*)(-?[0-9.]+(?:[eE][+-]?[0-9]+)?)(kHz|Hz|ms|us|s|dB|rad)?/;
+
+// One v0.6 param decl inside a process body:
+//   `name = param.<taper>(lo[unit], hi[unit]) default[unit] [|> smooth(...)]`
+// We don't capture the smooth tail here — the knob mounts at the default
+// value token's end; dragging rewrites just the default literal.
+const PARAM_RE_V6 =
+  /^(\s*)([A-Za-z_]\w*)(\s*=\s*param\.)(lin|log|exp|step)(\s*\(\s*)(-?[0-9.]+(?:[eE][+-]?[0-9]+)?)(kHz|Hz|ms|us|s|dB|rad|bpm)?(\s*,\s*)(-?[0-9.]+(?:[eE][+-]?[0-9]+)?)(kHz|Hz|ms|us|s|dB|rad|bpm)?(\s*\)\s+)(-?[0-9.]+(?:[eE][+-]?[0-9]+)?)(kHz|Hz|ms|us|s|dB|rad|bpm)?/;
 
 // Synthesised-range cache, keyed by param name. A `@param` with no
 // declared `[lo,hi]` gets a knob range of `[0, 2·value]` — but anchored
@@ -517,51 +804,115 @@ const _synthRange = new Map();
 // of the numeric literal (what a drag rewrites), the value token end
 // (where the knob mounts), and the knob's range/taper. A missing
 // `[lo,hi]` is synthesised as [0, 2·default] so the knob still has throw.
+// Engine-side param name. `compile.rs` namespaces a named process's
+// params as `<process>_<param>` (idempotent if the source already
+// prefixed it); an anonymous `process { }` / `process(in)` keeps bare
+// names. The inline knob's live `set_param` MUST use this engine name —
+// sending the bare `freq` against an engine that declared `drone_freq`
+// is an `UnknownName` no-op, so the drag only lands on the next hot-swap.
+function engineParamName(process, name) {
+  if (!process) return name;
+  const prefix = process + "_";
+  return name.startsWith(prefix) ? name : prefix + name;
+}
+
 function parseParams(doc) {
   const out = [];
+  // Track the enclosing process: `process foo(...) { … }` namespaces its
+  // params; the anonymous forms (`process { …`, `process(in) { …`) don't.
+  // A `param.*` line is always inside the most recent process header.
+  let process = null;
   for (let i = 1; i <= doc.lines; i++) {
     const line = doc.line(i);
-    const m = PARAM_RE.exec(line.text);
-    if (!m || m[4] === "Bool") continue;
-    const [, g1, name, g3, kind, g5, numStr] = m;
-    const unit = m[7] || "";
-    const valFrom = line.from + g1.length + name.length + g3.length + kind.length + g5.length;
-    const valTo = valFrom + numStr.length;
-    const tokEnd = valTo + unit.length;
-    const def = parseFloat(numStr);
-    const siScale = UNIT_SI[unit] ?? 1;
-    const valueSI = def * siScale;
-    const tail = line.text.slice(tokEnd - line.from);
-    // Capture optional unit suffixes from [lo, hi] bounds so that mixed-unit
-    // ranges like [300Hz, 6kHz] are correctly normalised to SI. If a bound has
-    // no suffix, fall back to the default value's unit scale (siScale).
-    const rng = /\[\s*(-?[0-9.eE+-]+)(kHz|Hz|ms|us|s|dB|rad)?\s*,\s*(-?[0-9.eE+-]+)(kHz|Hz|ms|us|s|dB|rad)?/.exec(tail);
-    let lo, hi;
-    if (rng) {
-      lo = parseFloat(rng[1]) * (UNIT_SI[rng[2] ?? ""] ?? siScale);
-      hi = parseFloat(rng[3]) * (UNIT_SI[rng[4] ?? ""] ?? siScale);
-    } else {
-      // Synthesised range: pin it on first sighting so a drag rewriting
-      // the literal can't drag `hi` along with it.
-      const cached = _synthRange.get(name);
-      if (cached) {
-        ({ lo, hi } = cached);
-      } else {
-        lo = 0;
-        hi = valueSI > 0 ? valueSI * 2 : siScale;
-        _synthRange.set(name, { lo, hi });
-      }
+    const named = /^\s*process\s+([A-Za-z_]\w*)/.exec(line.text);
+    if (named) process = named[1];
+    else if (/^\s*process\s*[{(]/.test(line.text)) process = null;
+    const v6 = parseParamLineV6(line);
+    if (v6) {
+      v6.engineName = engineParamName(process, v6.name);
+      out.push(v6);
+      continue;
     }
-    const taperLog = /taper\s*=\s*log/.test(tail) && lo > 0;
-    // The literal's own fractional-digit count is the precision the
-    // author asked for: `540` → integer steps, `540.00` → 0.01 steps.
-    // Sci-notation (`1.5e3`) collapses to integer for the rewrite.
-    const dotIdx = numStr.indexOf(".");
-    const decimals = (dotIdx < 0 || /[eE]/.test(numStr))
-      ? 0 : numStr.length - dotIdx - 1;
-    out.push({ name, unit, siScale, valFrom, valTo, tokEnd, value: valueSI, lo, hi, taperLog, decimals });
+    const v3 = parseParamLineV3(line);
+    if (v3) {
+      v3.engineName = v3.name; // v0.3 `@param` is module-global, never namespaced
+      out.push(v3);
+    }
   }
   return out;
+}
+
+// v0.3 `@param name: Kind = default[unit] [range] [smooth=] [taper=]`.
+function parseParamLineV3(line) {
+  const m = PARAM_RE_V3.exec(line.text);
+  if (!m || m[4] === "Bool") return null;
+  const [, g1, name, g3, kind, g5, numStr] = m;
+  const unit = m[7] || "";
+  const valFrom = line.from + g1.length + name.length + g3.length + kind.length + g5.length;
+  const valTo = valFrom + numStr.length;
+  const tokEnd = valTo + unit.length;
+  const def = parseFloat(numStr);
+  const siScale = UNIT_SI[unit] ?? 1;
+  const valueSI = def * siScale;
+  const tail = line.text.slice(tokEnd - line.from);
+  const rng = /\[\s*(-?[0-9.eE+-]+)(kHz|Hz|ms|us|s|dB|rad)?\s*,\s*(-?[0-9.eE+-]+)(kHz|Hz|ms|us|s|dB|rad)?/.exec(tail);
+  let lo, hi;
+  if (rng) {
+    lo = parseFloat(rng[1]) * (UNIT_SI[rng[2] ?? ""] ?? siScale);
+    hi = parseFloat(rng[3]) * (UNIT_SI[rng[4] ?? ""] ?? siScale);
+  } else {
+    const cached = _synthRange.get(name);
+    if (cached) {
+      ({ lo, hi } = cached);
+    } else {
+      lo = 0;
+      hi = valueSI > 0 ? valueSI * 2 : siScale;
+      _synthRange.set(name, { lo, hi });
+    }
+  }
+  const taperLog = /taper\s*=\s*log/.test(tail) && lo > 0;
+  const dotIdx = numStr.indexOf(".");
+  const decimals = (dotIdx < 0 || /[eE]/.test(numStr)) ? 0 : numStr.length - dotIdx - 1;
+  return { name, unit, siScale, valFrom, valTo, tokEnd, value: valueSI, lo, hi, taperLog, decimals, lineFrom: line.from };
+}
+
+// v0.6 `name = param.taper(lo[unit], hi[unit]) default[unit] [|> smooth(...)]`.
+// The knob mounts at the end of the *default* literal (and its unit); a
+// drag rewrites just that literal. Bounds come from the `(lo, hi)` call
+// args; taper from the `param.<taper>` segment. The optional `|> smooth(N)`
+// tail is left alone — the engine already received the smoothing time on
+// build and the knob's job is just to nudge the value.
+function parseParamLineV6(line) {
+  const m = PARAM_RE_V6.exec(line.text);
+  if (!m) return null;
+  const [
+    , leadWs, name, eqAndParam, taper, openParen,
+    loStr, loUnit, comma, hiStr, hiUnit, closeAndGap, defStr, defUnit,
+  ] = m;
+  // step taper → no knob (treat as a Bool-ish stepped param; surface that
+  // later if step continuous params arrive).
+  if (taper === "step") return null;
+  const unit = defUnit || "";
+  const siScale = UNIT_SI[unit] ?? 1;
+  const valueSI = parseFloat(defStr) * siScale;
+
+  const beforeDefault =
+    leadWs.length + name.length + eqAndParam.length + taper.length +
+    openParen.length + loStr.length + (loUnit?.length ?? 0) +
+    comma.length + hiStr.length + (hiUnit?.length ?? 0) + closeAndGap.length;
+  const valFrom = line.from + beforeDefault;
+  const valTo = valFrom + defStr.length;
+  const tokEnd = valTo + (defUnit?.length ?? 0);
+
+  const loSI = parseFloat(loStr) * (UNIT_SI[loUnit ?? ""] ?? siScale);
+  const hiSI = parseFloat(hiStr) * (UNIT_SI[hiUnit ?? ""] ?? siScale);
+  const lo = Math.min(loSI, hiSI);
+  const hi = Math.max(loSI, hiSI);
+  const taperLog = taper === "log" && lo > 0;
+
+  const dotIdx = defStr.indexOf(".");
+  const decimals = (dotIdx < 0 || /[eE]/.test(defStr)) ? 0 : defStr.length - dotIdx - 1;
+  return { name, unit, siScale, valFrom, valTo, tokEnd, value: valueSI, lo, hi, taperLog, decimals, lineFrom: line.from };
 }
 
 // value ⇄ [0,1] knob fraction, honouring a log taper (freq params).
@@ -588,8 +939,16 @@ class ParamKnobWidget extends WidgetType {
     super();
     this.name = p.name;
     this.frac = Math.min(1, Math.max(0, paramFrac(p)));
+    // Carry the line-start position so the drag handler can locate this
+    // specific param instance, not just any param with the same name.
+    // Duplicate param names across voices (e.g. "freq" in drone + kick)
+    // require position-based lookup; name-only find() picks the first match.
+    this.lineFrom = p.lineFrom;
   }
-  eq(o) { return o.name === this.name && Math.abs(o.frac - this.frac) < 1e-4; }
+  eq(o) {
+    return o.name === this.name && o.lineFrom === this.lineFrom &&
+           Math.abs(o.frac - this.frac) < 1e-4;
+  }
   ignoreEvent() { return true; }
   toDOM() {
     const deg = -135 + this.frac * 270;
@@ -600,7 +959,7 @@ class ParamKnobWidget extends WidgetType {
       <span class="ring"></span>
       <span class="ind" style="transform: translate(-50%, 0) rotate(${deg.toFixed(1)}deg)"></span>
       <span class="dot"></span>`;
-    span.addEventListener("pointerdown", (e) => beginParamDrag(e, this.name));
+    span.addEventListener("pointerdown", (e) => beginParamDrag(e, this.name, this.lineFrom));
     return span;
   }
 }
@@ -609,14 +968,24 @@ class ParamKnobWidget extends WidgetType {
 // pointer's y delta from pointerdown sets the new fraction (relative,
 // like a real knob — not a click-to-jump). The param's range stays put
 // across re-parses — declared `[lo,hi]` is fixed text, and a synthesised
-// range is pinned by `_synthRange`. The drag closes over the param
-// *name*, not stale offsets.
-function beginParamDrag(e, name) {
+// range is pinned by `_synthRange`.
+//
+// Identity is anchored by (name, lineFrom) rather than name alone, so that
+// duplicate param names across voices (e.g. "freq" in drone, kick, sub,
+// glass) each get their own knob throw — name-only lookup always hit the
+// first occurrence regardless of which knob was dragged.
+function beginParamDrag(e, name, lineFrom) {
   e.preventDefault();
   e.stopPropagation();
   const knobEl = e.currentTarget;
   knobEl.classList.add("dragging");
-  const find = () => parseParams(editor.state.doc).find((p) => p.name === name);
+  // Find the param on the exact line the knob was built for. After each
+  // drag-move dispatch the value literal changes length, shifting tokEnd,
+  // but the line-start (lineFrom) is stable as long as no line is inserted
+  // or deleted — which a value rewrite never does.
+  const find = () => parseParams(editor.state.doc).find(
+    (p) => p.name === name && p.lineFrom === lineFrom
+  );
   const start = find();
   if (!start) { knobEl.classList.remove("dragging"); return; }
   const y0 = e.clientY;
@@ -635,7 +1004,9 @@ function beginParamDrag(e, name) {
     });
     if (workletNode) {
       workletNode.port.postMessage({
-        set_param: { name, value },  // already SI — no extra scale needed
+        // `engineName` carries the `<process>_<param>` namespacing the
+        // compiler applies; the bare `name` would miss the engine param.
+        set_param: { name: p.engineName, value },  // already SI — no extra scale
       });
     }
   };
@@ -746,7 +1117,6 @@ function loadIntoEditor(name) {
     selection: { anchor: 0 },
   });
   loadingProgrammatically = false;
-  renderDiagram();
 }
 
 function markDirty(name, dirty) {
@@ -760,7 +1130,9 @@ function markDirty(name, dirty) {
 function renderFileTabs() {
   const bar = $("#file-tabs");
   bar.innerHTML = "";
-  Object.keys(fileContents).forEach((name, i) => {
+  const names = Object.keys(fileContents);
+  const closable = names.length > 1; // never strip the last tab's only patch
+  names.forEach((name, i) => {
     const tab = document.createElement("button");
     tab.className = "file-tab";
     tab.dataset.file = name;
@@ -768,10 +1140,24 @@ function renderFileTabs() {
     tab.innerHTML =
       `<span class="idx">${idx}</span>` +
       `<span>${name}</span>` +
-      `<span class="dot" title="unsaved edits"></span>`;
+      `<span class="dot" title="unsaved edits"></span>` +
+      (closable ? `<span class="close" title="close">×</span>` : "");
     tab.addEventListener("click", () => switchFile(name));
+    const x = tab.querySelector(".close");
+    if (x) x.addEventListener("click", (e) => { e.stopPropagation(); closeFile(name); });
     bar.appendChild(tab);
   });
+  const add = document.createElement("button");
+  add.className = "tab-add";
+  add.title = "new patch";
+  add.textContent = "+";
+  add.addEventListener("click", newFile);
+  bar.appendChild(add);
+  // Re-apply the active highlight: closing a background tab rebuilds the bar
+  // without a store change, so syncUI never fires to restore it.
+  const a = store.get().activeFile;
+  bar.querySelectorAll(".file-tab").forEach((t) =>
+    t.classList.toggle("active", t.dataset.file === a));
 }
 
 function switchFile(name) {
@@ -784,16 +1170,58 @@ function switchFile(name) {
   logEvent(`switched to ${name}`);
 }
 
+function newFile() {
+  let n = 1, name;
+  do { name = `untitled-${n}.fugue`; n++; } while (fileContents[name] !== undefined);
+  fileContents[name] = "process { out = sine(220Hz) * 0.2 }\n";
+  fileDirty[name] = false;
+  renderFileTabs();
+  switchFile(name); // persists current buffer, sets active, hot-swaps, loads editor
+}
+
+function closeFile(name) {
+  const list = Object.keys(fileContents);
+  if (list.length <= 1) return; // never close the last tab
+  if (fileDirty[name] && !confirm(`Discard unsaved edits to ${name}?`)) return;
+  const wasActive = name === store.get().activeFile;
+  const idx = list.indexOf(name);
+  delete fileContents[name];
+  delete fileDirty[name];
+  if (mountedFile === name) mountedFile = null; // so switchFile won't re-persist a deleted file
+  renderFileTabs();
+  if (wasActive) {
+    const rest = Object.keys(fileContents);
+    const next = rest[idx] || rest[idx - 1] || rest[0]; // prefer right neighbor, else left
+    switchFile(next);
+  }
+  logEvent(`closed ${name}`);
+}
+
 /* ───────────────────────────────────────────────────────────────────
    Mixer — one strip per voice + a master strip. Each strip owns a VU
    meter, a rotary gain knob, mute/solo, and a dBFS readout. Strip state
    is read/written through the store; `channels` holds DOM refs + scratch.
    ─────────────────────────────────────────────────────────────────── */
 const channels = {};
-const GAIN_MAX = 1.2;
+// Fader law: travel maps linearly in dB (a log gain taper), so the fader
+// feels like a console fader instead of crowding every useful level into
+// the bottom sliver of a linear ramp. Top of travel = +6 dB, floor = −60 dB,
+// and the very bottom snaps to true silence. Unity (0 dB) lands at ~91%.
+const FADER_DB_TOP = 6;
+const FADER_DB_FLOOR = -60;
+const FADER_DB_SPAN = FADER_DB_TOP - FADER_DB_FLOOR;
 
-// The slider handle's left% as a function of gain ∈ [0, GAIN_MAX].
-const handlePct = (gain) => (Math.max(0, Math.min(GAIN_MAX, gain)) / GAIN_MAX) * 100;
+// Fader position fraction ∈ [0,1] → linear gain.
+const faderToGain = (f) => {
+  f = Math.max(0, Math.min(1, f));
+  return f <= 0 ? 0 : Math.pow(10, (FADER_DB_FLOOR + f * FADER_DB_SPAN) / 20);
+};
+// Inverse: linear gain → the handle's left% along the travel.
+const handlePct = (gain) => {
+  if (gain <= 0) return 0;
+  const f = (20 * Math.log10(gain) - FADER_DB_FLOOR) / FADER_DB_SPAN;
+  return Math.max(0, Math.min(1, f)) * 100;
+};
 function renderHandle(rec) {
   const gain = store.get().voices[rec.name].gain;
   rec.handle.style.left = handlePct(gain).toFixed(2) + "%";
@@ -817,6 +1245,9 @@ function makeStrip(name, idx, isMaster) {
     <div class="ms-buttons">
       <button class="mute" title="mute">M</button>
       <button class="solo" title="solo">S</button>
+      ${!isMaster && store.get().armable.has(name)
+        ? '<button class="arm" title="live MIDI — off → override → MIDI-only" aria-label="arm for MIDI keyboard"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M11.2 16.4V5.2c2.7.45 4.6 1.95 4.6 4.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><ellipse cx="8.5" cy="16.6" rx="3.1" ry="2.4" fill="currentColor" transform="rotate(-22 8.5 16.6)"/></svg></button>'
+        : ""}
     </div>
     <div class="db-readout">—</div>
   `;
@@ -831,6 +1262,7 @@ function makeStrip(name, idx, isMaster) {
     readout: strip.querySelector(".db-readout"),
     muteBtn: strip.querySelector(".mute"),
     soloBtn: strip.querySelector(".solo"),
+    armBtn: strip.querySelector(".arm"),
     peakHold: 0, peakHoldT: 0,
     rmsBallistic: 0, peakBallistic: 0, lastFrame: 0,
   };
@@ -844,8 +1276,7 @@ function makeStrip(name, idx, isMaster) {
     // reflow mid-drag would be misery either way.
     const rect = track.getBoundingClientRect();
     const apply = (clientX) => {
-      const f = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      setVoice(name, { gain: f * GAIN_MAX });
+      setVoice(name, { gain: faderToGain((clientX - rect.left) / rect.width) });
     };
     apply(e.clientX);
     const move = (ev) => apply(ev.clientX);
@@ -861,6 +1292,7 @@ function makeStrip(name, idx, isMaster) {
     setVoice(name, { mute: !store.get().voices[name].mute }));
   rec.soloBtn.addEventListener("click", () =>
     setVoice(name, { solo: !store.get().voices[name].solo }));
+  rec.armBtn?.addEventListener("click", () => toggleArm(name));
   // Master has no engine-side solo concept; the button stays for parity
   // but is inert (master solo is never read).
   if (isMaster) rec.soloBtn.disabled = true;
@@ -1007,37 +1439,9 @@ function drawScope(s) {
   }
 }
 
-// Block diagram — third figure tab. Scene files (voice/scene decls) have
-// no single signal-flow graph, so they render a blank state pointing the
-// user back to the mixer.
-function isSceneFile(src) {
-  const cleaned = String(src).replace(/\/\/.*$/gm, "");
-  return /\bvoice\b/.test(cleaned) || /\bscene\b/.test(cleaned);
-}
-function renderDiagram() {
-  const host = $("#fig-diagram");
-  if (!host) return; // patch tab disabled — re-enable in index.html to restore
-  const name = store.get().activeFile;
-  const src = fileContents[name] || "";
-  const blank = document.createElement("div");
-  blank.className = "fig-blank";
-  if (isSceneFile(src)) {
-    blank.innerHTML =
-      `<div class="glyph">⌗</div>` +
-      `<div class="msg">scene file — see mixer.</div>`;
-  } else {
-    blank.innerHTML =
-      `<div class="glyph">▤</div>` +
-      `<div class="msg">single-patch file.</div>`;
-  }
-  host.innerHTML = "";
-  host.appendChild(blank);
-}
-
 const FIG_CAP = {
   spectrum: "log-frequency magnitude.",
   scope:    "zero-cross triggered.",
-  diagram:  "signal flow of the current patch.",
 };
 
 /* ── Header controls ────────────────────────────────────────────────── */
@@ -1083,7 +1487,6 @@ function syncUI(s) {
     p.classList.toggle("active", p.dataset.fig === s.figTab));
   $("#spec-ctls").classList.toggle("hidden", s.figTab !== "spectrum");
   $("#scope-ctls").classList.toggle("hidden", s.figTab !== "scope");
-  $("#hold-btn").classList.toggle("hidden", s.figTab === "diagram");
   $("#hold-btn").classList.toggle("on", s.frozen);
   $("#ctl-integ").querySelector(".cv").innerHTML = `${Math.round(s.specInteg)}<i>ms</i>`;
   $("#ctl-smooth").querySelector(".cv").innerHTML = `${Math.round(s.specSmooth)}<i>%</i>`;
@@ -1093,15 +1496,21 @@ function syncUI(s) {
 
   // transport / engine state
   const running = s.engineState === "running";
+  // The Eng status dot is driven straight from the store, so pause /
+  // resume / error / learn-open all stay honest — store.set is the single
+  // source of truth (no scattered setEngineState() calls to forget).
+  setEngineState(s.engineState, running ? "running" : s.engineState === "error" ? "err" : "idle");
   $("#play").classList.toggle("on", running);
-  // The play button keeps its glyph + label children (not just text), so
-  // we rewrite only what changes — the SVG inside .glyph and the label.
+  // The play button is icon-only; rewrite just the glyph (play ⇄ pause).
   const glyph = $("#play-glyph");
   if (glyph) glyph.innerHTML = running
-    ? `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><rect x="3" y="2" width="3" height="10" fill="currentColor"/><rect x="8" y="2" width="3" height="10" fill="currentColor"/></svg>`
-    : `<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><polygon points="3,2 12,7 3,12" fill="currentColor"/></svg>`;
-  const lbl = $("#play-label");
-  if (lbl) lbl.textContent = running ? "Pause" : "Play";
+    ? `<svg width="15" height="15" viewBox="0 0 14 14" fill="none"><rect x="3" y="2" width="3" height="10" fill="currentColor"/><rect x="8" y="2" width="3" height="10" fill="currentColor"/></svg>`
+    : `<svg width="15" height="15" viewBox="0 0 14 14" fill="none"><polygon points="3,2 12,7 3,12" fill="currentColor"/></svg>`;
+  // Record → bounce: the dot breathes while an offline WAV render runs.
+  $("#rec")?.classList.toggle("on", s.bouncing);
+  $("#rec")?.setAttribute("title", s.bouncing
+    ? "Bouncing to WAV…"
+    : "Bounce a WAV — pick a length");
   // Once the engine has started for the first time, the splash hint and
   // the pulsing call-to-action are no longer needed; keep them off for
   // the rest of the session even if the user hits stop.
@@ -1125,8 +1534,6 @@ store.subscribe(syncUI);
    Animation loop — per-frame render scratch only: VU meters, knob
    live-rings, and the active figure.
    ─────────────────────────────────────────────────────────────────── */
-const topbarVu = () => $("#topbar-vu");
-
 // VU-ish ballistics for the RMS bar: asymmetric one-pole, a touch quicker
 // than classical 300/300 so percussion doesn't read sluggish. The peak
 // ballistic feeds the dBFS readout text only (the position dot below
@@ -1201,25 +1608,37 @@ function promoteEngineSource() {
   engineSource = pendingEngineSource;
   engineByteToChar = buildByteToChar(engineSource);
   editsSinceCompile = ChangeSet.empty(engineSource.length);
+  // Any spans we still hold are against the *old* coordinate frame (the new
+  // engine hasn't tapped through its commit yet), so a queued pre-swap `active`
+  // would map wrong for one frame against the new map. Drop them; the new
+  // engine's first tap repaints within ~16 ms.
+  latestActive = null;
   lastHlKey = null; // force the next frame to re-dispatch the highlight
 }
 
-// Pattern-step highlight — driven by the worklet's active-span tap.
-// Each voice ships a [start,end] pair; (0,0) = rest. Re-decorates only
-// on an actual change (a few times a second at most).
-// `null` forces a re-dispatch on the next frame.
+// Pattern-step highlight — driven by the worklet's active-span tap (a flat,
+// packed, byte-span-deduped list of the sounding atoms). Re-decorates only on
+// an actual change (a few times a second at most); `lastHlKey = null` forces a
+// re-dispatch on the next frame.
 let lastHlKey = null;
 function updatePatternHighlight() {
   if (!editor) return;
-  const running = store.get().engineState === "running";
-  const ranges = [];
+  // "error" is a hot-swap compile failure: the *old* engine keeps playing, and
+  // its spans still map onto the live buffer via `editsSinceCompile`, so keep
+  // tracking it. (With no engine at all the `latestActive` guard below keeps it
+  // dark.) Only a real stop — "paused" — blanks the highlight.
+  const st = store.get().engineState;
+  const running = st === "running" || st === "error";
+  let ranges = [];
   if (running && latestActive && engineByteToChar && editsSinceCompile) {
     const map = engineByteToChar;
     const docLen = editor.state.doc.length;
+    // `latestActive` is a flat, packed list of [start,end] byte pairs — one per
+    // sounding atom across all voices (a chord-name lights once). No rest
+    // sentinels; only real atoms are packed.
     for (let i = 0; i + 1 < latestActive.length; i += 2) {
       const fromB = latestActive[i], toB = latestActive[i + 1];
-      // (0,0) is the "no active event" sentinel; a span past the compiled
-      // source is a stale tap from mid hot-swap — skip either way.
+      // A span past the compiled source is a stale tap from mid hot-swap — skip.
       if (fromB >= toB || toB >= map.length) continue;
       // byte → UTF-16 offset in the compiled source → live-doc position,
       // mapped through every edit since that compile. `TrackDel` returns
@@ -1229,7 +1648,10 @@ function updatePatternHighlight() {
       if (from < 0 || to < 0 || from >= to || to > docLen) continue;
       ranges.push([from, to]);
     }
-    ranges.sort((a, b) => a[0] - b[0]);
+    // Sort by (from, to) for CodeMirror's RangeSet. The engine already dedups
+    // by byte-span, so no JS dedup pass is needed (and overlapping marks are
+    // harmless if an in-flight edit ever maps two spans to one doc range).
+    ranges.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   }
   const key = ranges.map((r) => r[0] + ":" + r[1]).join("|");
   if (key === lastHlKey) return; // no boundary crossed — nothing to do
@@ -1238,6 +1660,25 @@ function updatePatternHighlight() {
     ? Decoration.set(ranges.map(([f, t]) => patternHlMark.range(f, t)))
     : Decoration.none;
   editor.dispatch({ effects: setPatternHl.of(deco) });
+}
+
+// Paint the DSP-load status chunk from latestCpu (a 0..1 budget fraction).
+// Coalesced — only touches the DOM when the rounded reading or warn state
+// changes, so the rAF loop never reflows the status bar for a number that
+// only moves a few times a second. `—` until the first worklet report.
+let loadLastText = null, loadLastWarn = false;
+function renderLoad() {
+  const el = $("#load-status");
+  if (!el) return;
+  let text, warn = false;
+  if (latestCpu == null) {
+    text = "—";
+  } else {
+    text = `${Math.min(999, Math.round(latestCpu * 100))}%`;
+    warn = latestCpu >= 0.8; // ≥80% of budget → over-subscription risk
+  }
+  if (text !== loadLastText) { el.textContent = text; loadLastText = text; }
+  if (warn !== loadLastWarn) { el.classList.toggle("warn", warn); loadLastWarn = warn; }
 }
 
 function frame() {
@@ -1259,16 +1700,8 @@ function frame() {
     if (mrec) {
       const mPeak = latestLevels[2 * order.length] || 0;
       const mRms = latestLevels[2 * order.length + 1] || 0;
-      const mPct = meterStrip(mrec, mRms, mPeak);
+      meterStrip(mrec, mRms, mPeak);
       mrec.readout.innerHTML = `<span class="neg">${dbfs(mrec.rmsBallistic)}</span>`;
-      // Chrome master strip: same VU, plus a dBFS readout next to it.
-      const tv = topbarVu();
-      if (tv) {
-        tv.querySelector(".rms").style.width = mPct + "%";
-        tv.querySelector(".peak").style.left = Math.min(99, mrec.peakHold) + "%";
-      }
-      const dbEl = $("#master-db");
-      if (dbEl) dbEl.textContent = `${dbfs(mrec.peakBallistic)} dB`;
     }
   }
 
@@ -1281,12 +1714,13 @@ function frame() {
       if (!s.frozen) analyser.getFloatTimeDomainData(timeData);
       drawScope(s);
     }
-    // diagram is static — rendered on file change, not per-frame.
   }
 
   // Pattern-step highlight — cheap (a key-string compare); only dispatches
   // a CodeMirror transaction on an actual step-boundary crossing.
   updatePatternHighlight();
+
+  renderLoad();
 
   requestAnimationFrame(frame);
 }
@@ -1309,6 +1743,10 @@ function applyAccentVars() {
   // light theme wants a *light* tint. Same code path either way.
   const softAmt = currentTheme === "dark" ? -0.72 : 0.6;
   document.body.style.setProperty("--signal-soft", shadeHex(currentAccent, softAmt));
+  // Text-selection wash — a translucent accent that rides in front of the text
+  // (see the `.cm-selectionLayer` rule). Translucent, so one alpha reads on
+  // both grounds; tracks the accent picker like every other signal var.
+  document.body.style.setProperty("--signal-sel", rgbaHex(currentAccent, 0.3));
 }
 
 function bindThemeToggle() {
@@ -1341,6 +1779,13 @@ function shadeHex(hex, amt) {
   return "#" + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
 }
 
+// hex + alpha (0..1) → `rgba(r, g, b, a)`. Sibling of shadeHex for the
+// translucent accent washes (text selection) that can't be a flat hex.
+function rgbaHex(hex, alpha) {
+  const n = parseInt(hex.replace("#", ""), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
 function bindAccentPicker() {
   const dots = document.querySelectorAll(".accent-dot");
   const apply = (color) => {
@@ -1356,6 +1801,9 @@ function bindZen() {
   const setZen = (on) => {
     document.body.classList.toggle("zen", on);
     btn.title = on ? "Exit zen (Esc)" : "Zen mode (Esc to exit)";
+    // The "Ref" button is hidden in zen, so close the drawer too — it must not
+    // be stranded open behind hidden chrome.
+    if (on) { const d = $("#cheat-drawer"); if (d) d.hidden = true; }
   };
   btn.addEventListener("click", () => setZen(!document.body.classList.contains("zen")));
   window.addEventListener("keydown", (e) => {
@@ -1363,6 +1811,490 @@ function bindZen() {
       setZen(false);
     }
   });
+}
+
+/* ───────────────────────────────────────────────────────────────────
+   Learn modal — the 8-lesson primer, surfaced as an overlay <iframe> of
+   learn/index.html?modal=1 over the live playground. The lesson page runs
+   its own isolated engine, so opening Learn suspends the playground audio
+   (and resumes it on close) to keep the two from overlapping. The iframe
+   posts {type:"fugue-learn-close"} when the user closes from inside; we
+   post {type:"fugue-learn-stop"} back so it suspends when closed from here.
+   ─────────────────────────────────────────────────────────────────── */
+function bindLearn() {
+  const btn = $("#learn-btn");
+  const overlay = $("#learn-overlay");
+  const frame = $("#learn-frame");
+  if (!btn || !overlay || !frame) return;
+  let wasRunning = false;
+
+  const open = () => {
+    if (!overlay.hidden) return;
+    // Hand the modal the current theme/accent so its paper skin matches the
+    // session. First open: as query params, so it paints right on frame one.
+    // Reopen (the iframe is lazy-loaded once and persists): postMessage, since
+    // the theme may have changed while it was closed.
+    if (!frame.getAttribute("src")) {
+      frame.src = `learn/index.html?modal=1&theme=${currentTheme}&accent=${encodeURIComponent(currentAccent)}`;
+    } else {
+      try { frame.contentWindow.postMessage({ type: "fugue-theme", theme: currentTheme, accent: currentAccent }, "*"); } catch {}
+    }
+    wasRunning = !!(audioCtx && audioCtx.state === "running");
+    if (wasRunning) { audioCtx.suspend(); store.set({ engineState: "paused" }); }
+    overlay.hidden = false;
+    requestAnimationFrame(() => { try { frame.contentWindow.focus(); } catch {} });
+  };
+  const close = () => {
+    if (overlay.hidden) return;
+    overlay.hidden = true;
+    try { frame.contentWindow.postMessage({ type: "fugue-learn-stop" }, "*"); } catch {}
+    if (wasRunning && audioCtx) { audioCtx.resume(); store.set({ engineState: "running" }); }
+    wasRunning = false;
+    btn.focus();
+  };
+
+  btn.addEventListener("click", open);
+  // Click the scrim (outside the centered frame) to dismiss.
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  window.addEventListener("keydown", (e) => { if (e.key === "Escape" && !overlay.hidden) close(); });
+  window.addEventListener("message", (e) => {
+    if (e.data && e.data.type === "fugue-learn-close") close();
+  });
+}
+
+/* ───────────────────────────────────────────────────────────────────
+   Bounce to WAV — an offline, deterministic render of the *currently
+   playing* patch to a downloadable 16-bit WAV. Reuses the main-thread
+   wasm `Engine` (already inited for the version pill): a fresh engine
+   renders from t=0 — a clean downbeat, a seamless loop — faster than
+   realtime, so the live worklet keeps playing untouched. Knob values
+   already ride in the source text (the inline @param knobs rewrite the
+   literal on drag); only mixer state (gain/mute/solo + master) lives
+   outside it, so we replay that onto the fresh engine.
+
+   This is an export bounce, not a live take — it captures current knob
+   *values*, not their movement. Live performance-capture is deferred; it
+   would share encodeWav16 + downloadWav below.
+   ─────────────────────────────────────────────────────────────────── */
+
+// Replay the mixer (per-voice gain/mute/solo) onto a fresh offline engine
+// — mirrors replayMixer()'s worklet path, but drives the Engine directly.
+function replayMixerTo(eng) {
+  const s = store.get();
+  s.voiceOrder.forEach((name, idx) => {
+    const v = s.voices[name];
+    if (!v) return;
+    if (v.gain !== 1) eng.set_voice_gain(idx, v.gain);
+    if (v.mute) eng.set_voice_mute(idx, true);
+    if (v.solo) eng.set_voice_solo(idx, true);
+  });
+}
+
+// Interleave two channels into a 16-bit PCM stereo WAV Blob. Samples are
+// clipped to [-1, 1] before quantising (the DAC clips anyway); no dither.
+function encodeWav16(left, right, sampleRate) {
+  const frames = left.length;
+  const dataBytes = frames * 2 * 2; // 2 channels · 16-bit
+  const buf = new ArrayBuffer(44 + dataBytes);
+  const dv = new DataView(buf);
+  const tag = (off, str) => { for (let i = 0; i < str.length; i++) dv.setUint8(off + i, str.charCodeAt(i)); };
+  tag(0, "RIFF"); dv.setUint32(4, 36 + dataBytes, true); tag(8, "WAVE");
+  tag(12, "fmt "); dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true); dv.setUint16(22, 2, true);          // PCM, stereo
+  dv.setUint32(24, sampleRate, true);
+  dv.setUint32(28, sampleRate * 4, true);                        // byte rate (2ch · 2B)
+  dv.setUint16(32, 4, true); dv.setUint16(34, 16, true);         // block align, bit depth
+  tag(36, "data"); dv.setUint32(40, dataBytes, true);
+  let off = 44;
+  for (let i = 0; i < frames; i++) {
+    for (const ch of [left, right]) {
+      const x = Math.max(-1, Math.min(1, ch[i]));
+      dv.setInt16(off, x < 0 ? x * 0x8000 : x * 0x7fff, true);
+      off += 2;
+    }
+  }
+  return new Blob([buf], { type: "audio/wav" });
+}
+
+// Object-URL download of a Blob under `name`.
+function downloadWav(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Render `seconds` of the currently-playing patch to a WAV and download.
+// Off the audio path: a fresh Engine renders deterministically from t=0,
+// chunked with yields so a long bounce neither janks the UI nor freezes
+// the "rendering" breath.
+async function bounceToWav(bars) {
+  if (store.get().bouncing) return;          // ignore re-entry mid-render
+  const src = engineSource || fileContents[store.get().activeFile];
+  if (!src) { logEvent("nothing to bounce"); return; }
+  const sr = audioCtx?.sampleRate ?? 48000;
+  store.set({ bouncing: true });
+  logEvent(`bouncing ${bars} bar${bars === 1 ? "" : "s"}…`);
+  let eng = null;
+  try {
+    await ensureWasmInit();
+    eng = new Engine(src, sr);
+    replayMixerTo(eng);
+    const arity = Math.max(eng.output_arity(), 1);
+    // Bars → frames via the engine's own cycle rate (1 cycle = 1 bar), so the
+    // export is a whole number of cycles and loops seamlessly whatever the
+    // patch's `tempo`. Fall back to a 120-bpm cycle if the rate is degenerate.
+    const spc = eng.samples_per_cycle();
+    const framesPerBar = Number.isFinite(spc) && spc > 0 ? spc : sr * 2;
+    const total = Math.round(bars * framesPerBar);
+    const interleaved = new Float32Array(total * arity);
+    // Render in 128-frame blocks — the SAME render quantum the live worklet
+    // uses. The arrangement samples each pattern/control value once per
+    // step_block call and holds it across the block (arrangement.rs §"once per
+    // block"), so the block size IS the timing grid: a bigger block snaps note
+    // and lead onsets to a coarser grid. 128 makes the bounce match what was
+    // heard. Yield to the event loop only every ~0.25 s of audio so a long
+    // render stays responsive without thousands of setTimeouts.
+    const BLOCK = 128;
+    const yieldEvery = Math.max(1, Math.round((sr * 0.25) / BLOCK));
+    let sinceYield = 0;
+    for (let f = 0; f < total; f += BLOCK) {
+      const n = Math.min(BLOCK, total - f);
+      eng.step_block(interleaved.subarray(f * arity, (f + n) * arity));
+      if (++sinceYield >= yieldEvery) { sinceYield = 0; await new Promise((r) => setTimeout(r, 0)); }
+    }
+    // De-interleave to L/R using the worklet's fold rule (host channel c
+    // reads engine output c, or output 0 when the patch is narrower), and
+    // fold in master gain/mute as a scalar (master is a JS node, not a voice).
+    const m = store.get().voices.master;
+    const masterScalar = m ? (m.mute ? 0 : m.gain) : 1;
+    const rCh = arity > 1 ? 1 : 0;
+    const left = new Float32Array(total);
+    const right = new Float32Array(total);
+    for (let i = 0; i < total; i++) {
+      left[i] = interleaved[i * arity] * masterScalar;
+      right[i] = interleaved[i * arity + rCh] * masterScalar;
+    }
+    const base = (store.get().activeFile || "patch").replace(/\.fugue$/, "");
+    const ts = new Date().toTimeString().slice(0, 8).replace(/:/g, "");
+    downloadWav(encodeWav16(left, right, sr), `fugue-${base}-${bars}bar-${ts}.wav`);
+    const kHz = (sr / 1000).toFixed(sr % 1000 ? 1 : 0);
+    logEvent(`bounced ${bars} bar${bars === 1 ? "" : "s"} · ${(total / sr).toFixed(1)}s · ${kHz} kHz`);
+  } catch (err) {
+    showBootError(unwrapErr(err), "bounce failed");
+    logEvent("bounce failed");
+    console.error("bounceToWav failed:", err);
+  } finally {
+    eng?.free();
+    store.set({ bouncing: false });
+  }
+}
+
+/* Record button → bounce. Clicking opens a small length menu (1–32 bars);
+   picking a length renders the patch to a WAV and downloads it. Bars, not
+   seconds — the export is a whole number of cycles, so it loops seamlessly.
+   The red dot breathes while the (faster-than-realtime) render runs. Last
+   length sticks in localStorage. No playback needed — it renders the playing
+   source from t=0 and never touches the live engine. */
+const REC_LENGTHS = [1, 2, 4, 8, 16, 32];
+function bindRecord() {
+  const rec = $("#rec");
+  const menu = $("#rec-menu");
+  if (!rec || !menu) return;
+
+  let pick = parseInt(localStorage.getItem("fugue:bounceBars") || "4", 10);
+  if (!REC_LENGTHS.includes(pick)) pick = 4;
+  const mark = () => menu.querySelectorAll("button").forEach((b) =>
+    b.classList.toggle("on", +b.dataset.bars === pick));
+  mark();
+
+  const onDoc = (e) => { if (!menu.contains(e.target) && !rec.contains(e.target)) closeMenu(); };
+  const closeMenu = () => { menu.hidden = true; document.removeEventListener("click", onDoc, true); };
+  const openMenu = () => {
+    if (!menu.hidden) return;
+    menu.hidden = false;
+    document.addEventListener("click", onDoc, true);
+  };
+
+  rec.addEventListener("click", () => { menu.hidden ? openMenu() : closeMenu(); });
+  menu.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-bars]");
+    if (!b) return;
+    pick = +b.dataset.bars;
+    localStorage.setItem("fugue:bounceBars", String(pick));
+    mark();
+    closeMenu();
+    bounceToWav(pick);
+  });
+  window.addEventListener("keydown", (e) => { if (e.key === "Escape" && !menu.hidden) closeMenu(); });
+}
+
+/* ───────────────────────────────────────────────────────────────────
+   About — a small modal opened by either "about" door (the
+   wordmark or the version pill). On the first session the "about" cue
+   reveals itself once (then it's hover-only), gated by localStorage.
+   ─────────────────────────────────────────────────────────────────── */
+function bindAbout() {
+  const overlay = $("#about-overlay");
+  if (!overlay) return;
+  const pill = $("#version-pill");
+  const word = $("#wordmark");
+  const cue = $("#about-cue");
+
+  const open = () => {
+    if (!overlay.hidden) return;
+    const v = $("#about-version");
+    if (v) v.textContent = $("#version-text")?.textContent || "";
+    overlay.hidden = false;
+    $("#about-close")?.focus();
+  };
+  const close = () => {
+    if (overlay.hidden) return;
+    overlay.hidden = true;
+    (pill || word)?.focus();
+  };
+
+  pill?.addEventListener("click", open);
+  word?.addEventListener("click", open);
+  $("#about-close")?.addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  window.addEventListener("keydown", (e) => { if (e.key === "Escape" && !overlay.hidden) close(); });
+
+  // Placeholder links route into the existing in-app surfaces.
+  $("#about-learn")?.addEventListener("click", () => { close(); $("#learn-btn")?.click(); });
+  $("#about-ref")?.addEventListener("click", () => { close(); $("#cheat-btn")?.click(); });
+
+  // First-run cue — teach the about door once, then retire to hover-only.
+  if (cue) {
+    let taught = false;
+    try { taught = localStorage.getItem("fugue.aboutTaught") === "1"; } catch {}
+    if (!taught) {
+      setTimeout(() => {
+        cue.classList.add("reveal");
+        setTimeout(() => cue.classList.remove("reveal"), 3200);
+      }, 900);
+      try { localStorage.setItem("fugue.aboutTaught", "1"); } catch {}
+    }
+  }
+}
+
+/* ───────────────────────────────────────────────────────────────────
+   Cheatsheet drawer — a non-modal reference that overlays the panels
+   column. The editor stays live while it's open, so there's no
+   click-outside / Esc dismissal: the "Ref" button toggles it, the ✕
+   closes it. Content is fetched once from ./cheatsheet.html (the source
+   of truth) and cached. Click any `.cs-copy` token to copy it; "Copy all"
+   serialises the whole sheet to Markdown for pasting into an LLM.
+   ─────────────────────────────────────────────────────────────────── */
+
+// Framing prepended to the "Copy all" Markdown so a pasted-in LLM knows
+// what it's reading and which rules dominate.
+// The imperative half of the LLM payload. The body that follows (the cheatsheet
+// serialised to Markdown by cheatToMarkdown) carries the generated fact tables +
+// gotchas; this preamble carries the generation rules. Together they ARE the LLM
+// payload — there is no separate file (the former docs/CHEATSHEET.llm.md retired
+// into this preamble 2026-06-27).
+const CHEAT_LLM_PREAMBLE = [
+  "# Fugue — patch generation rules (v0.7). Reference of what actually compiles.",
+  "",
+  "Generate ONE `.fugue` source and nothing else — no prose, no code fences. A patch is " +
+    "`process` blocks (signal graphs) followed by a score (`pattern -> target` routing lines). " +
+    "Obey the rules here; the tables below are exhaustive — do NOT invent stages, chord " +
+    "qualities, scales, mini-notation tokens, or transforms that are not listed. Anything not " +
+    "listed does not compile.",
+  "",
+  "Output contract:",
+  "- Every `process` body must assign `out = …` (no `out` ⇒ silent; `out = (l, r)` ⇒ stereo).",
+  "- Pitched voice: `process name(note, trig) { … }`. Drum: `process name(trig) { … }`. The trigger port MUST be named `trig`.",
+  "- Polyphony is explicit: `process pad(note, trig) voices 6 { … }` (default 1).",
+  "- `|>` pipes the left signal into the FIRST argument of the next stage.",
+  "",
+  "Never (these do not compile):",
+  "- NEVER use a pipeline as a `*`/`+` operand without parens — write `(saw(note) |> lpf(c,q)) * env`, not `saw(note) |> lpf(c,q) * env` (`|>` binds loosest).",
+  "- NEVER pass a bare number where a stage arg shows `:Hz`/`:s`/`:dB` — use a unit literal (`8kHz`, `220ms`, `-12dB`).",
+  "- NEVER use a unit suffix INSIDE a quote — atoms are bare numbers (`\"<200 600>\"`, not `\"<200Hz 600Hz>\"`).",
+  "- NEVER drive pitch and gate from one port — split into `(note, trig)`.",
+  "- NEVER use `@ ! / { } , ( ) | 0..7` inside a quote (only the mini-notation tokens below parse).",
+  "- A chord-name quote needs `|> voicing` (plus a `voices N` pool) to make sound.",
+  "- `note` in a body is a frequency in Hz (`note*2` = octave up), not a MIDI/degree number.",
+  "- `lfo(hz)` is bipolar ±1 — drive a param as `center + lfo(hz)*depth`.",
+  "",
+  "The full reference (generated from the compiler) follows; its \"Gotchas\" table lists more natural-guess → real-form fixes.",
+].join("\n");
+
+// Serialise the rendered cheatsheet (#cheat-body) to clean Markdown. We own the
+// fragment's structure, so this stays small: sections → ## headings, <pre> →
+// fenced code, <th>-led rows → "- **group**: `tok` `tok`", 2-col rows → bullets,
+// .cs-note paragraphs → prose. <code> → backticks, <b> → bold.
+function cheatToMarkdown(root) {
+  const norm = (s) => s.replace(/\s+/g, " ").trim();
+  const inline = (el) => {
+    let s = "";
+    el.childNodes.forEach((n) => {
+      if (n.nodeType === 3) s += n.textContent;
+      else if (n.tagName === "CODE") s += "`" + norm(n.textContent) + "`";
+      else if (n.tagName === "B" || n.tagName === "STRONG") s += "**" + norm(inline(n)) + "**";
+      else s += inline(n);
+    });
+    return norm(s);
+  };
+  const chips = (el) =>
+    [...el.querySelectorAll("code")].map((c) => "`" + norm(c.textContent) + "`").join(" ");
+
+  const lines = [];
+  root.querySelectorAll(".cs-sec").forEach((sec) => {
+    const h3 = sec.querySelector("h3");
+    if (h3) {
+      const sub = h3.querySelector(".cs-sub");
+      const title = norm([...h3.childNodes].filter((n) => n !== sub).map((n) => n.textContent).join(""));
+      const warn = h3.classList.contains("cs-warn") ? "⚠ " : "";
+      lines.push("", `## ${warn}${title}${sub ? ` — ${norm(sub.textContent)}` : ""}`);
+    }
+    [...sec.children].forEach((child) => {
+      if (child === h3) return;
+      if (child.tagName === "PRE") {
+        lines.push("", "```fugue", child.textContent.replace(/\s+$/, ""), "```");
+      } else if (child.tagName === "TABLE") {
+        lines.push("");
+        const sep = child.classList.contains("cs-gotchas") ? " → " : " — ";
+        [...child.rows].forEach((row) => {
+          const cells = [...row.cells];
+          if (cells[0].tagName === "TH") lines.push(`- **${inline(cells[0])}**: ${chips(cells[1])}`);
+          else lines.push(`- ${inline(cells[0])}${sep}${inline(cells[1])}`);
+        });
+      } else if (child.tagName === "UL") {
+        lines.push("");
+        [...child.children].forEach((li) => lines.push(`- ${inline(li)}`));
+      } else if (child.classList.contains("cs-note")) {
+        lines.push("", inline(child));
+      }
+    });
+  });
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function bindCheatsheet() {
+  const drawer = $("#cheat-drawer");
+  const body = $("#cheat-body");
+  if (!drawer || !body) return;
+  let loaded = false, loadingP = null;
+  // Fetch-once, shared promise so "Copy all" can await the same load as "open".
+  const ensureLoaded = () => {
+    if (loaded) return Promise.resolve();
+    if (loadingP) return loadingP;
+    loadingP = (async () => {
+      try {
+        const res = await fetch("./cheatsheet.html");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        body.innerHTML = await res.text();
+        loaded = true;
+      } catch (err) {
+        body.innerHTML = '<div class="cheat-loading">couldn’t load the cheatsheet.</div>';
+        loadingP = null; // let the next attempt retry
+        throw err;
+      }
+    })();
+    return loadingP;
+  };
+  const open = () => { drawer.hidden = false; ensureLoaded().catch(() => {}); };
+  const close = () => { drawer.hidden = true; };
+  $("#cheat-btn")?.addEventListener("click", () => (drawer.hidden ? open() : close()));
+  $("#cheat-close")?.addEventListener("click", close);
+
+  // "Copy all" → whole sheet as LLM-friendly Markdown.
+  let copyResetT = null;
+  $("#cheat-copyall")?.addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    let ok = false;
+    try {
+      await ensureLoaded();
+      await navigator.clipboard.writeText(CHEAT_LLM_PREAMBLE + "\n\n" + cheatToMarkdown(body));
+      ok = true;
+    } catch { /* load or clipboard failed */ }
+    // CSS swaps the copy icon for a check on .copied; .failed tints it.
+    btn.classList.toggle("copied", ok);
+    btn.classList.toggle("failed", !ok);
+    btn.title = ok ? "Copied to clipboard" : "Copy the whole cheatsheet as Markdown — paste into Claude";
+    clearTimeout(copyResetT);
+    copyResetT = setTimeout(() => {
+      btn.classList.remove("copied", "failed");
+      btn.title = "Copy the whole cheatsheet as Markdown — paste into Claude";
+    }, 1500);
+  });
+
+  // Click a single snippet → clipboard, with a brief highlight (echoes the Share flash).
+  let flashEl = null, flashT = null;
+  body.addEventListener("click", async (e) => {
+    const code = e.target.closest(".cs-copy");
+    if (!code) return;
+    try { await navigator.clipboard.writeText(code.textContent.trim()); } catch { /* insecure ctx */ }
+    if (flashEl) flashEl.classList.remove("copied");
+    clearTimeout(flashT);
+    flashEl = code;
+    code.classList.add("copied");
+    flashT = setTimeout(() => { code.classList.remove("copied"); }, 900);
+  });
+}
+
+/* ───────────────────────────────────────────────────────────────────
+   Share links — encode the live patch into the URL hash so any patch is
+   a copy-pasteable permalink. Determinism makes the link exact: the same
+   source rebuilds the same engine, so the URL *is* the patch.
+
+   Hash format: `#<scheme><payload>`. Scheme `0` = base64url(UTF-8), no
+   padding. The leading scheme char reserves room for a future compressed
+   scheme (e.g. `1` = deflate) without breaking links already in the wild.
+   ─────────────────────────────────────────────────────────────────── */
+const SHARE_NAME = "shared.fugue"; // tab label for a URL-loaded patch
+
+// UTF-8 string ⇄ base64url (no padding). btoa is Latin-1-only, so route
+// through the byte array — fugue sources carry Unicode (─, —, café, …).
+function b64urlEncode(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function b64urlDecode(token) {
+  const b64 = token.replace(/-/g, "+").replace(/_/g, "/");
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
+const encodeShareToken = (src) => "0" + b64urlEncode(src);
+function decodeShareToken(token) {
+  if (!token || token[0] !== "0") return null; // unknown / absent scheme
+  try { return b64urlDecode(token.slice(1)); } catch { return null; }
+}
+
+// Decode the shared patch from location.hash, or null if absent/garbage
+// (a plain `#anchor` fragment decodes to null and is ignored at boot).
+function sourceFromHash() {
+  const h = (location.hash || "").replace(/^#/, "");
+  return h ? decodeShareToken(h) : null;
+}
+
+// Share button — encode the live editor doc into the hash + clipboard.
+// The button is icon-only now, so confirmation lives in the status log.
+async function shareCurrentPatch() {
+  if (!editor) return;
+  const token = encodeShareToken(editor.state.doc.toString());
+  // Update the address bar in place — no new history entry, no reload.
+  // NB: `window.history` — the bare `history` is CodeMirror's undo-history
+  // extension, imported at the top of this module (it shadows the global).
+  try { window.history.replaceState(null, "", "#" + token); } catch {}
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(location.href);
+    copied = true;
+  } catch { /* insecure context or no permission — link is in the URL bar */ }
+  logEvent(copied ? "share link copied to clipboard" : "share link in address bar");
 }
 
 /* ───────────────────────────────────────────────────────────────────
@@ -1374,6 +2306,11 @@ function bindZen() {
   bindThemeToggle();
   bindAccentPicker();
   bindZen();
+  bindCheatsheet();
+  bindLearn();
+  bindAbout();
+  bindRecord();
+  bindMidi();
   $("#play").classList.add("idle"); // pulse until first play
   $("#play").addEventListener("click", toggle);
   $("#stop").addEventListener("click", async () => {
@@ -1382,6 +2319,14 @@ function bindZen() {
       store.set({ engineState: "paused" });
       logEvent("stopped");
     }
+  });
+  $("#share")?.addEventListener("click", shareCurrentPatch);
+  // Compile-error pane: collapse from the pane, re-surface from the status bar.
+  $("#boot-error-collapse")?.addEventListener("click", collapseBootError);
+  $("#error-toggle")?.addEventListener("click", () => {
+    const el = $("#boot-error");
+    if (el) el.hidden = false;
+    setErrorToggle(false);
   });
   // ⌘↵ also works when the editor isn't focused.
   window.addEventListener("keydown", (e) => {
@@ -1392,10 +2337,19 @@ function bindZen() {
 
   fileContents = await loadPatches();
   fileDirty = {};
+  // A shared link (#<token>) overrides the default patch: inject the
+  // decoded source as a dedicated tab and open it first. The built-in
+  // patches stay available as the remaining tabs.
+  const shared = sourceFromHash();
+  if (shared != null) {
+    const rest = { ...fileContents };
+    delete rest[SHARE_NAME];
+    fileContents = { [SHARE_NAME]: shared, ...rest };
+  }
   const names = Object.keys(fileContents);
-  const first = names[0];
+  const first = shared != null ? SHARE_NAME : names[0];
   renderFileTabs();
   store.set({ activeFile: first }); // syncUI loads it into the editor
-  logEvent("press ▶ to listen");
+  logEvent(shared != null ? "loaded shared patch — press ▶" : "press ▶ to listen");
   requestAnimationFrame(frame);
 })();

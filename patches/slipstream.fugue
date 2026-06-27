@@ -1,0 +1,91 @@
+// slipstream.fugue — downtempo jazz built from one interconnected graph.
+//
+// The whole piece flows from a signal graph that wires back on itself:
+//
+//   • sidechain     — the kick ducks the bass and the reverb (`kick -> bass.duck`)
+//   • one LFO, two filters — `motion` breathes epiano.cut and lead.cut together
+//   • a reverb send — `epiano -> space`, the room sidechained by the same kick
+//   • a mask        — the ride drops out every 4th bar (`ride * fill -> out`)
+//   • stereo placement and poly chords
+//
+// Harmony is one chord source (Bb minor i → v: `<Bbm9 Fm9>`) voiced into a
+// 6-voice pad and fanned to the bass root and a chord-tone lead — one harmonic
+// source feeding three voices, written in chord names (`voicing` / `n(i)`).
+// Read the instruments, then the score.
+
+tempo  = 114bpm
+motion = lfo(0.05Hz)             // one slow LFO, shared by two filters
+fill   = "<1 1 1 0>"             // a mask: 1 = pass, 0 = mute — drops every 4th bar
+
+// ── drums ─────────────────────────────────────────────────────────────
+process kick(trig)  { out = kick(50Hz, 110Hz, 150ms, 2.2, trig) * 0.62 }
+process snare(trig) {
+    cut = param.log(900Hz, 3kHz) 1.9kHz |> smooth(15ms)
+    out = (noise(7) |> bpf(cut, 1.3)) * adsr(1ms, 150ms, 0.0, 12ms, trig) * 0.3
+}
+process hat(trig) {
+    cut = param.log(2kHz, 9kHz) 7.5kHz |> smooth(20ms)
+    out = (noise(13) |> bpf(cut, 0.5)) * adsr(1ms, 70ms, 0.0, 5ms, trig) * 0.17
+}
+process ride(trig) {
+    cut = param.log(3kHz, 8kHz) 6.5kHz |> smooth(20ms)
+    out = (noise(21) |> bpf(cut, 0.8)) * adsr(2ms, 360ms, 0.0, 18ms, trig) * 0.12
+}
+
+// ── bass — sidechain-ducked by the kick, ladder-filtered, a little drive ──
+process bass(note, trig, duck: audio) {
+    cut  = param.log(60Hz, 700Hz) 180Hz |> smooth(12ms)
+    body = saw_naive(note) |> ladder(cut, 0.4) |> tanh(1.8)
+    out  = body * ar(6ms, 240ms, trig) * (1.0 - 0.7 * env_follow(duck, 16ms)) * 0.38
+}
+
+// ── epiano — the harmony: six poly voices, cutoff breathing under `motion` ──
+process epiano(note, trig) voices 6 {
+    cut = param.log(400Hz, 4kHz) 1.1kHz |> smooth(40ms)
+    out = (saw_naive(note) |> lpf(cut, 0.4)) * adsr(12ms, 500ms, 0.5, 700ms, trig) * 0.055
+}
+
+// ── lead — a scale phrase, palindromic flip every fourth bar ──
+process lead(note, trig) {
+    cut = param.log(500Hz, 6kHz) 0.9kHz |> smooth(8ms)
+    out = (saw(note) |> ladder(cut, 0.6)) * adsr(4ms, 200ms, 0.3, 1600ms, trig) * 0.52
+}
+
+// ── space — a reverb send (audio-input voice), sidechained by the kick ──
+process space(in: audio, duck: audio) {
+    out = (in |> fdn8(3.3452453, 2.0kHz, 0.72)) * (1.0 - 0.5 * env_follow(duck, 24ms))
+}
+
+// ── score — `source [|> combinators] -> target` ─────────────────────────
+// drums
+"1 ~ 1 ~ 1 ~ ~ 1"                          -> kick
+"~ ~ 1 ~ ~ ~ 1 ~"                          -> snare
+"1 ~" |> fast(8)  |> every(2, fast(2))             -> hat
+"~ ~ 1 ~"                                  -> ride
+
+// harmony — one chord source fans into three voices: the pad voices the full
+// chord (struck on 1 & 3), the bass pumps its root an octave down, the lead
+// picks chord-tones into a phrase flipped every fourth bar.
+"<Bbm9 Fm9> <Bbm9 Fm9>" |> voicing                          -> epiano
+"<Bbm9 Fm9>" |> n("0 ~ 0 ~ <0 2> ~ 0 ~") |> octave(-1)      -> bass
+"<Bbm9 Fm9>" |> n("0 ~ 4 ~ 2 ~ <7 5> ~") |> every(4, jux(rev)) |> fast(2)  -> lead
+
+// modulation — one LFO breathing two filters
+800Hz + motion*500Hz                       -> epiano.cut
+800Hz + motion*500Hz                       -> lead.cut
+
+// sidechain — the kick ducks the bass and the reverb tail
+kick                                       -> bass.duck
+kick                                       -> space.duck
+
+// arrangement / sends — epiano feeds the room; pan places; the mask drops the
+// ride out every 4th bar
+epiano                                     -> space
+kick                                       -> out
+snare                                      -> out
+hat    |> pan(0.3)                         -> out
+ride * fill                                -> out
+bass                                       -> out
+epiano |> pan(-0.1)                        -> out
+lead   |> pan(0.2)                         -> out
+space                                      -> out
