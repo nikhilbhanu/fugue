@@ -9,21 +9,43 @@
 //     by the {levels} postMessage, knobs/M/S by {set_voice} messages.
 //   - Master-only spectrum + oscilloscope off an AnalyserNode.
 //
-// CodeMirror 6 has no in-tree bundler, so it loads from esm.sh with
-// ?deps pinned so view/commands/language all share one @codemirror/state.
+// CodeMirror 6 has no in-tree bundler, so it loads from esm.sh. Every package
+// is pinned to an EXACT version, and the dependents force the same
+// @codemirror/state AND @codemirror/view via ?deps — so view/commands/language
+// share ONE state and ONE view instance and esm.sh can't drift them apart.
+//
+// The VIEW dedup is load-bearing, not cosmetic: CodeMirror highlighting is
+// facet-based, and a facet only matches within a single @codemirror/view
+// module. If we pin view to 6.43.3 but let language resolve its own view (a
+// range that floats to the latest, e.g. 6.43.4), syntaxHighlighting registers
+// against that second view's facets while the editor runs on ours — and ALL
+// syntax highlighting silently dies (no keyword colour, no mini-notation
+// string backing). Pinning the version is NOT enough; it must be in ?deps so
+// every package resolves to the same view build. (This is the bug an earlier
+// "pin to exact versions" commit introduced by deduping state but not view.)
+//
+// @lezer/highlight is pinned and fed into @codemirror/language's ?deps for the
+// SAME reason: HighlightStyle matches tokens by Tag *identity*, so the `tags`
+// object we import must come from the exact same @lezer/highlight build that
+// @codemirror/language tags its StreamLanguage tokens with. Left floating, the
+// two can resolve to different 1.x builds and ALL highlighting silently dies.
+//
+// State is pinned to 6.7.0 because view 6.43.x calls a state method added there
+// (EditorSelection.undirectionalRange) — on an older state, word-select on
+// double-click threw.
 
-import { EditorState, StateField, StateEffect, Transaction, ChangeSet, MapMode } from "https://esm.sh/@codemirror/state@6.6.0";
+import { EditorState, StateField, StateEffect, Transaction, ChangeSet, MapMode } from "https://esm.sh/@codemirror/state@6.7.0";
 import {
   EditorView, keymap, lineNumbers, highlightActiveLine,
   highlightActiveLineGutter, drawSelection, Decoration, WidgetType,
-} from "https://esm.sh/@codemirror/view@6?deps=@codemirror/state@6.6.0";
+} from "https://esm.sh/@codemirror/view@6.43.3?deps=@codemirror/state@6.7.0";
 import {
   defaultKeymap, history, historyKeymap, indentWithTab,
-} from "https://esm.sh/@codemirror/commands@6?deps=@codemirror/state@6.6.0";
+} from "https://esm.sh/@codemirror/commands@6.10.4?deps=@codemirror/state@6.7.0,@codemirror/view@6.43.3";
 import {
   StreamLanguage, syntaxHighlighting, HighlightStyle, bracketMatching,
-} from "https://esm.sh/@codemirror/language@6?deps=@codemirror/state@6.6.0";
-import { tags } from "https://esm.sh/@lezer/highlight@1";
+} from "https://esm.sh/@codemirror/language@6.12.4?deps=@codemirror/state@6.7.0,@codemirror/view@6.43.3,@lezer/highlight@1.2.1";
+import { tags } from "https://esm.sh/@lezer/highlight@1.2.1";
 import initWasm, { version as fugueVersion, Engine } from "./fugue_wasm.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -62,6 +84,7 @@ const store = createStore({
   armedMode: "override",   // "override" (pattern + live) | "midi-only" (live only)
   engineState: "idle",     // idle | loading | running | paused | error
   bouncing: false,         // offline WAV bounce in progress (transient — set by bounceToWav)
+  mview: "code",           // mobile single-pane view: code | panels (desktop ignores it)
 });
 
 // File contents + dirty flags live outside the reactive store — they
@@ -132,7 +155,7 @@ let latestLevels = null; // Float32Array — [peak,rms] per voice + master
 // Uint32Array from the worklet's {active} tap: a flat, packed list of
 // [start,end] absolute-byte pairs — one per atom sounding this block, across
 // all voices (a chord-name lights once; no rest sentinels). Drives the
-// Strudel-style pattern-step highlight — cleared on hot-swap, replaced on
+// live pattern-step highlight — cleared on hot-swap, replaced on
 // every {levels} push.
 let latestActive = null;
 // DSP load (render time / block budget, 0..1) from the worklet's {cpu} field;
@@ -274,6 +297,22 @@ async function teardown() {
   try { if (audioCtx) await audioCtx.close(); } catch {}
   audioCtx = workletNode = masterGainNode = analyser = null;
 }
+
+// Stop audio when the page goes away. iOS keeps the AudioContext *and* the
+// looping silent-unlock <audio> element alive when a tab is hidden, navigated
+// away from, or closed (the media session lingers in the background), so the
+// patch can keep playing after the tab is gone. `pagehide` fires on close,
+// navigation, and bfcache entry — pause the unlock element (releases the media
+// session) and suspend the context so nothing plays on. `pageshow` re-arms the
+// unlock loop if the page is restored from bfcache.
+window.addEventListener("pagehide", () => {
+  try { silentUnlockEl?.pause(); } catch {}
+  try { audioCtx?.suspend(); } catch {}
+  if (audioCtx) store.set({ engineState: "paused" });
+});
+window.addEventListener("pageshow", (e) => {
+  if (e.persisted && silentUnlockEl) { try { silentUnlockEl.play().catch(() => {}); } catch {} }
+});
 
 // `msg` is the full rendered diagnostic (message + line:col + caret block) —
 // shown verbatim in the monospace strip. `head` labels the context.
@@ -589,7 +628,7 @@ function onVoiceList(names, armable) {
 
 /* ───────────────────────────────────────────────────────────────────
    CodeMirror 6 — editorial theme + a small fugue StreamLanguage. The
-   eval-flash is a line Decoration driven by a StateField (Strudel idiom).
+   eval-flash is a line Decoration driven by a StateField (a CodeMirror idiom).
    ─────────────────────────────────────────────────────────────────── */
 // v0.7 surface keywords: process / feedback / out / param / import|from|as
 // (the v0.6 `fugue` block keyword retired); 4 top-level config names
@@ -737,7 +776,7 @@ const flashField = StateField.define({
 });
 
 // Pattern-step highlight — a mark Decoration over the mini-notation atoms
-// currently sounding (Strudel's live-step idiom). The rAF loop maps the
+// currently sounding (the live-coding step-highlight idiom). The rAF loop maps the
 // worklet's active-span tap (absolute `.fugue` byte ranges) onto live-doc
 // positions and pushes a fresh set through `setPatternHl` whenever the set
 // of lit atoms changes.
@@ -1527,6 +1566,12 @@ function syncUI(s) {
     rec.el.classList.toggle("muted", v.mute);
     renderHandle(rec);
   });
+
+  // mobile single-pane view — CSS keys off body[data-mview]; the bottom nav
+  // highlights the live segment. (No-op on desktop, where the layout ignores it.)
+  document.body.dataset.mview = s.mview;
+  document.querySelectorAll(".mnav-btn").forEach((b) =>
+    b.classList.toggle("on", b.dataset.mview === s.mview));
 }
 store.subscribe(syncUI);
 
@@ -1681,13 +1726,19 @@ function renderLoad() {
   if (warn !== loadLastWarn) { el.classList.toggle("warn", warn); loadLastWarn = warn; }
 }
 
+// On mobile in the Code view the mixer + figure are offscreen — their
+// per-frame redraw is wasted work, so skip it (audio is untouched). The
+// editor's pattern highlight and the status load readout stay live.
+const mqMobile = matchMedia("(max-width: 900px)");
+
 function frame() {
   const s = store.get();
   const order = s.voiceOrder;
+  const panelsVisible = !(mqMobile.matches && s.mview === "code");
 
   // Per-voice strips, fed by the worklet's {levels} push. Layout:
   // [peak0,rms0, peak1,rms1, …, peakMaster,rmsMaster].
-  if (latestLevels && order.length) {
+  if (panelsVisible && latestLevels && order.length) {
     order.forEach((name, i) => {
       const rec = channels[name];
       if (!rec) return;
@@ -1706,7 +1757,7 @@ function frame() {
   }
 
   // Active figure — Hold gates the analysis (data capture), not the redraw.
-  if (analyser) {
+  if (panelsVisible && analyser) {
     if (s.figTab === "spectrum") {
       if (!s.frozen) analyzeSpectrum(s);
       drawSpectrum(s);
@@ -1751,16 +1802,20 @@ function applyAccentVars() {
 
 function bindThemeToggle() {
   const light = $("#theme-light"), dark = $("#theme-dark");
+  // The mobile sheet carries a mirror of the theme switch (data-theme buttons).
+  const sheetBtns = document.querySelectorAll("#sheet-theme button[data-theme]");
   const apply = (mode) => {
     currentTheme = mode;
     document.body.classList.remove("theme-light", "theme-dark");
     document.body.classList.add("theme-" + mode);
     light.classList.toggle("on", mode === "light");
     dark.classList.toggle("on", mode === "dark");
+    sheetBtns.forEach((b) => b.classList.toggle("on", b.dataset.theme === mode));
     applyAccentVars();
   };
   light.addEventListener("click", () => apply("light"));
   dark.addEventListener("click", () => apply("dark"));
+  sheetBtns.forEach((b) => b.addEventListener("click", () => apply(b.dataset.theme)));
 }
 
 // hex + amt (-1..1) → tinted hex. Same shape as the design's `shade`.
@@ -1794,6 +1849,37 @@ function bindAccentPicker() {
     dots.forEach((d) => d.classList.toggle("on", d.dataset.color === color));
   };
   dots.forEach((d) => d.addEventListener("click", () => apply(d.dataset.color)));
+}
+
+/* ───────────────────────────────────────────────────────────────────
+   Mobile chrome — the bottom nav, the overflow sheet, and the mobile
+   hot-swap button. All no-ops on desktop (those elements are display:none),
+   so this wires unconditionally at boot.
+   ─────────────────────────────────────────────────────────────────── */
+function bindMobileChrome() {
+  // Bottom nav → switch the single visible pane.
+  document.querySelectorAll(".mnav-btn").forEach((b) =>
+    b.addEventListener("click", () => store.set({ mview: b.dataset.mview })));
+
+  // Overflow sheet — open from the hamburger, dismiss via the scrim.
+  const sheet = $("#sheet"), scrim = $("#sheet-scrim");
+  const openSheet = () => { sheet?.classList.add("open"); scrim?.classList.add("open"); };
+  const closeSheet = () => { sheet?.classList.remove("open"); scrim?.classList.remove("open"); };
+  $("#menu-btn")?.addEventListener("click", openSheet);
+  scrim?.addEventListener("click", closeSheet);
+
+  // Sheet workspace actions reuse the existing chrome handlers, then close.
+  document.querySelectorAll(".sheet-act").forEach((b) =>
+    b.addEventListener("click", () => {
+      const act = b.dataset.act;
+      if (act === "learn") $("#learn-btn")?.click();
+      else if (act === "ref") $("#cheat-btn")?.click();
+      else if (act === "share") shareCurrentPatch();
+      closeSheet();
+    }));
+
+  // Mobile hot-swap — the touch equivalent of ⌘↵ (evaluate flashes the doc).
+  $("#hotswap-m")?.addEventListener("click", () => evaluate());
 }
 
 function bindZen() {
@@ -2289,6 +2375,18 @@ async function shareCurrentPatch() {
   // NB: `window.history` — the bare `history` is CodeMirror's undo-history
   // extension, imported at the top of this module (it shadows the global).
   try { window.history.replaceState(null, "", "#" + token); } catch {}
+  // Native OS share sheet where it exists (mobile, some desktops). A user
+  // dismissal (AbortError) is not a failure — just stop, the URL is updated.
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: "fugue.fm patch", url: location.href });
+      logEvent("shared patch");
+      return;
+    } catch (err) {
+      if (err && err.name === "AbortError") return;
+      /* anything else (no share target, permission) → clipboard fallback */
+    }
+  }
   let copied = false;
   try {
     await navigator.clipboard.writeText(location.href);
@@ -2311,6 +2409,7 @@ async function shareCurrentPatch() {
   bindAbout();
   bindRecord();
   bindMidi();
+  bindMobileChrome();
   $("#play").classList.add("idle"); // pulse until first play
   $("#play").addEventListener("click", toggle);
   $("#stop").addEventListener("click", async () => {

@@ -44,6 +44,11 @@
     --chrome-h: 56px;
     --tabs-h: 30px;
     --status-h: 28px;
+
+    /* iOS home-indicator inset — 0 on every non-notched device. Padded into
+       the bottom-edge mobile chrome (nav + sheet) so nothing sits under the
+       home bar. */
+    --safe-b: env(safe-area-inset-bottom, 0px);
 }
 
 body.theme-dark {
@@ -428,8 +433,12 @@ body.zen .cluster {
     cursor: pointer;
 }
 
-.rec-menu button:hover {
-    background: rgba(229, 52, 43, 0.10);
+/* Hover-capable only: the bounce-length buttons switch via a delegated handler
+   (#rec-menu), so on touch a bare `:hover` eats the first tap (see .fig-tab). */
+@media (hover: hover) {
+    .rec-menu button:hover {
+        background: rgba(229, 52, 43, 0.10);
+    }
 }
 
 .rec-menu button.on {
@@ -839,9 +848,13 @@ body.zen .cheat-btn {
     transition: background 120ms ease, color 120ms ease;
 }
 
-.cheat-body code.cs-copy:hover {
-    background: var(--signal);
-    color: var(--signal-ink);
+/* Hover-capable only: the copy chips are `<code>` (not buttons) with a delegated
+   handler (.cheat-body), so on touch a bare `:hover` eats the first tap. */
+@media (hover: hover) {
+    .cheat-body code.cs-copy:hover {
+        background: var(--signal);
+        color: var(--signal-ink);
+    }
 }
 
 .cheat-body code.cs-copy.copied {
@@ -1588,8 +1601,15 @@ body.zen .panels-col {
     position: relative;
 }
 
-.fig-tab:hover {
-    color: var(--ink-2);
+/* Guard the hover tint behind hover-capable pointers. The fig tabs switch via a
+   delegated click handler (#fig-tabs), so iOS doesn't mark each button first-tap
+   clickable; a bare `:hover` then makes the first tap *show the hover* and only
+   switch on the second/third — the same two-tap bug fixed for the file tabs. On
+   touch (hover: none) the rule simply doesn't apply, so the first tap switches. */
+@media (hover: hover) {
+    .fig-tab:hover {
+        color: var(--ink-2);
+    }
 }
 
 .fig-tab.active {
@@ -2259,4 +2279,455 @@ body.theme-dark .status {
     font-family: var(--hand);
     font-size: 16px;
     color: var(--ink-3);
+}
+
+/* ════════════════════════════ MOBILE LAYER ════════════════════════════
+ *
+ * The desktop layout is a fixed two-column grid (editor | panels). On phones
+ * and portrait tablets it collapses to a single switched pane (Code / Panels)
+ * with a bottom nav and an overflow sheet for the secondary chrome.
+ *
+ * The mobile-only elements (#menu-btn, .hotswap-m, .mobile-nav, .sheet,
+ * .sheet-scrim) carry their full styling here but stay display:none until the
+ * @media breakpoint flips them on — so desktop is byte-for-byte unchanged.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+/* ── Mobile-only elements: defined, but hidden on desktop ─────────────── */
+.menu-btn,
+.hotswap-m,
+.mobile-nav,
+.sheet,
+.sheet-scrim {
+    display: none;
+}
+
+/* ══ Phones + portrait tablets ═════════════════════════════════════════ */
+@media (max-width: 900px) {
+
+    /* The page grows a 5th row for the bottom nav. dvh (not vh) tracks the
+       *visible* viewport, so the nav isn't pushed behind Safari's toolbars /
+       below the fold when they're shown — the iOS "100vh is too tall" trap,
+       worst in landscape. */
+    .page {
+        height: 100dvh;
+        grid-template-rows: var(--chrome-h) var(--tabs-h) minmax(0, 1fr) var(--status-h) auto;
+    }
+
+    /* Touch has no hover. A hover-revealed close button makes iOS apply :hover
+       on the first tap and only fire the click on the *second* (the "needs two
+       taps to switch tabs" bug). Show the close persistently so the first tap
+       registers as a real click. */
+    .file-tab .close {
+        opacity: 1;
+    }
+
+    /* ── Chrome: brand + transport + hamburger only ─────────────────── */
+    .brand {
+        padding: 0 14px;
+    }
+
+    .wordmark {
+        font-size: 26px;
+    }
+
+    .about-cue {
+        display: none;
+        /* hover-only affordance — useless on touch */
+    }
+
+    /* Keep the version pill (an About door) but drop the long tagline. */
+    .brand .plate>span {
+        display: none;
+    }
+
+    /* Desktop-only chrome controls fold into the overflow sheet. */
+    .theme-toggle,
+    .accents,
+    .docs,
+    .zen-btn,
+    #share {
+        display: none;
+    }
+
+    .menu-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        width: 48px;
+        background: none;
+        border: none;
+        border-left: 1px solid var(--hairline);
+        color: var(--ink);
+        cursor: pointer;
+    }
+
+    .menu-btn:hover {
+        background: rgba(20, 20, 20, 0.04);
+    }
+
+    /* ── Main: single switched pane ─────────────────────────────────── */
+    .main {
+        display: block;
+        position: relative;
+        grid-template-columns: none;
+    }
+
+    .editor,
+    .panels-col {
+        position: absolute;
+        inset: 0;
+    }
+
+    .editor {
+        border-right: none;
+    }
+
+    /* data-mview on <body> selects which pane is live. */
+    body[data-mview="code"] .panels-col {
+        display: none;
+    }
+
+    body[data-mview="panels"] .editor {
+        display: none;
+    }
+
+    /* Panels view → mixer + figure stacked and scrollable. */
+    body[data-mview="panels"] .panels-col {
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    body[data-mview="panels"] .mixer-panel,
+    body[data-mview="panels"] .figure-panel {
+        flex: 0 0 auto;
+    }
+
+    /* The mixer sizes to its content; the whole column scrolls. The master
+       strip's sticky-bottom degrades to a static last row (it just trails the
+       voice list) — fine on a phone. */
+    body[data-mview="panels"] .mixer-body {
+        max-height: none;
+        overflow-y: visible;
+    }
+
+    /* The figure needs an explicit height — its SVG is drawn from the host's
+       clientHeight, so a flex-auto (content-less) box would collapse to 0. */
+    body[data-mview="panels"] .figure-panel {
+        height: 320px;
+    }
+
+    /* ── Editor head: drop the desktop meta + cursor readout, show run ─ */
+    .editor-head {
+        padding: 0 16px;
+    }
+
+    #editor-meta,
+    #editor-pos {
+        display: none;
+    }
+
+    .hotswap-m {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 13px;
+        background: var(--signal);
+        color: var(--signal-ink);
+        border: none;
+        border-radius: 4px;
+        font-family: var(--sans);
+        font-weight: 700;
+        font-size: 10px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        cursor: pointer;
+        line-height: 1;
+    }
+
+    /* A touch larger code for thumbs. */
+    .editor-body .cm-content {
+        font-size: 13.5px;
+    }
+
+    /* ── Mixer strip reflow: fader gets its own full-width row ───────── */
+    .channel-strip {
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        grid-template-areas:
+            "idx  name db"
+            "fade fade ms";
+        height: auto;
+        row-gap: 9px;
+        column-gap: 10px;
+        padding: 11px 16px;
+        align-items: center;
+    }
+
+    .channel-strip .idx {
+        grid-area: idx;
+    }
+
+    .channel-strip .label {
+        grid-area: name;
+    }
+
+    .channel-strip .gain-slider {
+        grid-area: fade;
+        height: 26px;
+    }
+
+    .channel-strip .ms-buttons {
+        grid-area: ms;
+    }
+
+    .channel-strip .db-readout {
+        grid-area: db;
+    }
+
+    /* Bigger M/S touch targets. */
+    .ms-buttons button {
+        width: 30px;
+        height: 26px;
+        font-size: 11px;
+    }
+
+    /* Per-voice MIDI arm is desktop-only for now (docs/midi.md). Match the base
+       `.ms-buttons button.arm { display: flex }` specificity (0,2,1) so this
+       wins by source order — `.ms-buttons .arm` (0,2,0) would lose to it. */
+    .ms-buttons button.arm {
+        display: none;
+    }
+
+    /* ── Ref drawer → full-screen overlay ───────────────────────────── */
+    /* The drawer normally lives inside .panels-col (absolute inset:0). On a
+       phone it covers the whole screen. */
+    .cheat-drawer:not([hidden]) {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        z-index: 1200;
+    }
+
+    /* Ref can be opened from the sheet while the Code pane is live — and a
+       display:none ancestor would suppress the (fixed) drawer. Reveal the
+       column whenever it holds an open drawer; the opaque full-screen drawer
+       hides the mixer/figure behind it. (:has specificity outranks the
+       data-mview rule above, so no !important needed.) */
+    .panels-col:has(.cheat-drawer:not([hidden])) {
+        display: block;
+    }
+
+    /* ── Status bar: keep SR · Eng · log; drop the rest ─────────────── */
+    .status {
+        padding: 0 14px;
+        gap: 14px;
+    }
+
+    /* Keep SR · Load · Eng · log on mobile. Buf is always 128, MIDI is a
+       desktop-only feature here, and the ⌘↵ hint is irrelevant on touch — but
+       DSP load is *more* useful on a phone (tighter CPU headroom), so it stays. */
+    .status .chunk.buf,
+    .status .chunk.midi,
+    .status .kbd {
+        display: none;
+    }
+
+    /* ── Bottom nav ─────────────────────────────────────────────────── */
+    .mobile-nav {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        background: var(--surface);
+        border-top: 1.5px solid var(--ink);
+        padding-bottom: var(--safe-b);
+    }
+
+    .mnav-btn {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        height: 54px;
+        background: none;
+        border: none;
+        border-right: 1px solid var(--hairline);
+        font-family: var(--sans);
+        font-weight: 700;
+        font-size: 9px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+        cursor: pointer;
+        transition: color 120ms ease;
+    }
+
+    .mnav-btn:last-child {
+        border-right: none;
+    }
+
+    .mnav-btn .glyph {
+        width: 18px;
+        height: 18px;
+        display: grid;
+        place-items: center;
+    }
+
+    .mnav-btn.on {
+        color: var(--signal);
+    }
+
+    /* ── Overflow sheet + scrim ─────────────────────────────────────── */
+    .sheet-scrim {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: 1300;
+        background: rgba(20, 18, 12, 0.46);
+        -webkit-backdrop-filter: blur(2px);
+        backdrop-filter: blur(2px);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease;
+    }
+
+    .sheet-scrim.open {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    .sheet {
+        display: block;
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 1301;
+        background: var(--surface);
+        border-top: 1.5px solid var(--ink);
+        padding: 14px 18px calc(18px + var(--safe-b));
+        max-height: 82dvh;
+        overflow-y: auto;
+        transform: translateY(101%);
+        transition: transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    .sheet.open {
+        transform: translateY(0);
+    }
+
+    .sheet-grip {
+        width: 38px;
+        height: 4px;
+        border-radius: 2px;
+        background: var(--hairline);
+        margin: 0 auto 14px;
+    }
+
+    .sheet-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 0;
+        border-bottom: 1px dashed var(--hairline-2);
+    }
+
+    .sheet-row:last-child {
+        border-bottom: none;
+    }
+
+    .sheet-lbl {
+        font-family: var(--sans);
+        font-weight: 700;
+        font-size: 10px;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: var(--ink-3);
+    }
+
+    .sheet-seg {
+        display: flex;
+        border: 1.2px solid var(--ink);
+        border-radius: 4px;
+        overflow: hidden;
+    }
+
+    .sheet-seg button {
+        padding: 8px 18px;
+        background: var(--paper);
+        border: none;
+        border-right: 1px solid var(--ink);
+        font-family: var(--sans);
+        font-weight: 700;
+        font-size: 11px;
+        color: var(--ink);
+        cursor: pointer;
+    }
+
+    .sheet-seg button:last-child {
+        border-right: none;
+    }
+
+    .sheet-seg button.on {
+        background: var(--signal);
+        color: var(--signal-ink);
+    }
+
+    .sheet-accents {
+        display: flex;
+        gap: 16px;
+    }
+
+    /* Bigger accent dots — comfortable thumb targets. */
+    .sheet-accents .accent-dot {
+        width: 22px;
+        height: 22px;
+    }
+
+    .sheet-acts {
+        gap: 10px;
+    }
+
+    .sheet-act {
+        flex: 1;
+        padding: 13px 0;
+        background: var(--paper);
+        border: 1.2px solid var(--ink);
+        border-radius: 4px;
+        font-family: var(--sans);
+        font-weight: 700;
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--ink);
+        cursor: pointer;
+    }
+
+    .sheet-act:active {
+        background: var(--signal);
+        color: var(--signal-ink);
+        border-color: var(--signal);
+    }
+}
+
+/* ══ Narrow phones ═════════════════════════════════════════════════════ */
+@media (max-width: 380px) {
+    .wordmark {
+        font-size: 22px;
+    }
+
+    .brand {
+        padding: 0 10px;
+    }
+
+    /* Tighten the transport so play · stop · rec · hamburger always fit. */
+    .tbtn {
+        padding: 0 11px;
+    }
+
+    .menu-btn {
+        width: 42px;
+    }
 }

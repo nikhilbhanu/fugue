@@ -72,7 +72,7 @@ process bass(note, trig) {                 // a signal graph
       <code class="cs-copy">saw(freq:Hz)</code> <code class="cs-copy">saw_naive(freq:Hz)</code> <code class="cs-copy">square(freq:Hz)</code> <code class="cs-copy">tri(freq:Hz)</code> <code class="cs-copy">pulse(freq:Hz, width)</code> <code class="cs-copy">sine(freq:Hz)</code> <code class="cs-copy">phasor(freq:Hz)</code> <code class="cs-copy">lfo(freq:Hz)</code> <code class="cs-copy">noise(seed)</code> <code class="cs-copy">noise_pink(seed)</code>
     </td></tr>
     <tr><th>filters</th><td>
-      <code class="cs-copy">|&gt; lpf(fc:Hz, q)</code> <code class="cs-copy">|&gt; hpf(fc:Hz, q)</code> <code class="cs-copy">|&gt; bpf(fc:Hz, q)</code> <code class="cs-copy">|&gt; ladder(fc:Hz, q)</code> <code class="cs-copy">|&gt; biquad(fc:Hz, q)</code> <code class="cs-copy">|&gt; sallen_key_lp(fc:Hz, q)</code> <code class="cs-copy">|&gt; onepole_lp(coeff)</code> <code class="cs-copy">|&gt; allpass_fc(fc:Hz)</code> <code class="cs-copy">|&gt; peak(fc:Hz, gain:dB, q)</code> <code class="cs-copy">|&gt; dc_block()</code>
+      <code class="cs-copy">|&gt; lpf(fc:Hz, q)</code> <code class="cs-copy">|&gt; hpf(fc:Hz, q)</code> <code class="cs-copy">|&gt; bpf(fc:Hz, q)</code> <code class="cs-copy">|&gt; ladder(fc:Hz, q)</code> <code class="cs-copy">|&gt; biquad(fc:Hz, q)</code> <code class="cs-copy">|&gt; sallen_key_lp(fc:Hz, q)</code> <code class="cs-copy">|&gt; onepole_lp(coeff)</code> <code class="cs-copy">|&gt; allpass_fc(fc:Hz)</code> <code class="cs-copy">|&gt; peak(fc:Hz, gain:dB, q)</code> <code class="cs-copy">|&gt; dc_block()</code> <code class="cs-copy">|&gt; tf1(b0, b1, a1)</code>
     </td></tr>
     <tr><th>envelopes</th><td>
       <code class="cs-copy">ar(attack:s, release:s, gate)</code> <code class="cs-copy">adsr(attack:s, decay:s, sustain, release:s, gate)</code> <code class="cs-copy">decay(gate, time:s)</code> <code class="cs-copy">ramp(from, to, time:s, gate)</code> <code class="cs-copy">|&gt; env_follow(time:s)</code> <code class="cs-copy">|&gt; smooth(time:s)</code>
@@ -88,6 +88,9 @@ process bass(note, trig) {                 // a signal graph
     </td></tr>
     <tr><th>modulation</th><td>
       <code class="cs-copy">|&gt; tremolo(rate:Hz, depth)</code> <code class="cs-copy">|&gt; vibrato(rate:Hz, depth)</code> <code class="cs-copy">|&gt; chorus(rate:Hz, depth)</code> <code class="cs-copy">|&gt; flanger(rate:Hz, depth, fb)</code> <code class="cs-copy">|&gt; phaser(rate:Hz, depth, stages)</code>
+    </td></tr>
+    <tr><th>stereo (mono → stereo)</th><td>
+      <code class="cs-copy">|&gt; pan(pos)</code> <code class="cs-copy">|&gt; binaural(az, el)</code>
     </td></tr>
     <tr><th>composite voices</th><td>
       <code class="cs-copy">kick(freq:Hz, cutoff:Hz, decay:s, drive, gate)</code> <code class="cs-copy">snare(gate, tone:Hz, noiseMix, decay:s)</code> <code class="cs-copy">hat(gate, decay:s, color:Hz)</code> <code class="cs-copy">karplus(freq:Hz, decay, gate)</code> <code class="cs-copy">sawbass(freq:Hz, cutoff:Hz, q, attack:s, release:s, gate)</code> <code class="cs-copy">poly(freq:Hz, cutoff:Hz, q, attack:s, decay:s, sustain, release:s, gate)</code>

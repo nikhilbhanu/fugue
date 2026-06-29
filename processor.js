@@ -454,17 +454,22 @@ class FugueProcessor extends AudioWorkletProcessor {
     }
 
     if (this.pendingEngine) {
-      // Non-structural hot-swap (nodes added/removed): a hard cut would step, so
-      // equal-power crossfade the outgoing and incoming engine across this one
-      // block to mask it. We do NOT migrate state here — the outgoing engine
-      // needs its full state to render its fade-OUT half, and a `mem::swap`
-      // migrate would gut it. One block ≈ 2.7 ms @ 48 kHz — enough to mask the
-      // discontinuity, short enough to still read as a clean cut for live coding.
+      // Non-structural hot-swap (nodes added/removed): equal-power crossfade the
+      // outgoing and incoming engine across this one block to mask the step from
+      // genuinely added/removed content. We DO migrate matched DSP state (LFO /
+      // oscillator phase, filter coeffs, reverb tails) old→new — but only AFTER
+      // rendering the outgoing engine's fade-OUT block into `a`, so the
+      // `mem::swap` that guts the outgoing engine costs us nothing (its block is
+      // already captured). The successor then renders its fade-IN half from the
+      // carried state instead of phase 0, so free-running LFOs / oscillators stay
+      // continuous across the swap; only genuinely-new nodes start fresh, and the
+      // crossfade masks those. One block ≈ 2.7 ms @ 48 kHz.
       if (frames !== this.fadeRampLen) this.buildFadeRamp(frames);
       const oldStride = Math.max(this.outArity, 1);
       const newStride = Math.max(this.pendingArity, 1);
       const a = this.scratch, b = this.scratchB;
       this.engine.step_block(a.subarray(0, frames * oldStride));
+      this.pendingEngine.migrate_from(this.engine);
       this.pendingEngine.step_block(b.subarray(0, frames * newStride));
       const gOld = this.fadeOld, gNew = this.fadeNew;
       for (let ch = 0; ch < channels; ch++) {

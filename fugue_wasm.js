@@ -144,10 +144,15 @@ export class Engine {
      * matched node state (reverb tails, oscillator phase, held poly notes, LFO
      * phase + the sample clock) from `old` into `self` using the plan stashed by
      * [`Engine::build_successor`]. A no-op on an engine that wasn't built as a
-     * successor (`swap` is `None`). Called only on the structural (hard-cut)
-     * path; a non-structural swap fades and never applies its plan. `old` is
-     * left holding `self`'s prior default state; the caller drops it right after
-     * (the worklet's `commitPending`).
+     * successor (`swap` is `None`).
+     *
+     * Called on **both** swap paths: the structural (hard-cut) path migrates then
+     * declicks, and the non-structural (fade) path migrates the matched nodes so
+     * free-running phase stays continuous, then crossfades to mask the added /
+     * removed ones. Only the `matched` pairs move, so the non-structural case
+     * leaves unmatched nodes on their fresh state. `old` is left holding `self`'s
+     * prior default state; the caller drops it right after (the worklet's
+     * `commitPending`).
      *
      * The migration loop ([`ArrangementEngine::apply_migration`]) is itself
      * alloc/drop-free (a `mem::swap` per node) — that is what keeps the **native**

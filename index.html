@@ -37,7 +37,7 @@
   />
   <link rel="stylesheet" href="./style.css" />
 </head>
-<body class="theme-light">
+<body class="theme-light" data-mview="code">
 <div class="page">
 
   <!-- ───────────────────────────── CHROME ───────────────────────────── -->
@@ -158,6 +158,15 @@
       </span>
       Zen
     </button>
+    <!-- Mobile-only overflow menu (theme/accent/learn/ref/share). Hidden on
+         desktop — see the @media block in style.css. -->
+    <button class="menu-btn" id="menu-btn" title="Menu" aria-label="Menu">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <line x1="2.5" y1="5" x2="15.5" y2="5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        <line x1="2.5" y1="9" x2="15.5" y2="9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+        <line x1="2.5" y1="13" x2="15.5" y2="13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+    </button>
   </header>
 
   <!-- ───────────────────────────── TABS ───────────────────────────── -->
@@ -173,6 +182,14 @@
           <span class="name">Editor</span>
           <span class="meta" id="editor-meta">hot-swap on ⌘↵</span>
         </div>
+        <!-- Mobile-only hot-swap trigger (⌘↵ has no touch equivalent). Hidden
+             on desktop; shown in the @media block. -->
+        <button class="hotswap-m" id="hotswap-m" title="Hot-swap this patch">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+            <path d="M13 2 L3 14 h9 l-1 8 l10 -12 h-9 l1 -8 z" fill="currentColor"/>
+          </svg>
+          hot-swap
+        </button>
         <div class="pos" id="editor-pos">—</div>
       </div>
       <div class="editor-body" id="editor-body">
@@ -259,8 +276,8 @@
   <!-- ───────────────────────────── STATUS ───────────────────────────── -->
   <footer class="status">
     <div class="chunk"><span class="lbl">SR</span><span class="val" id="sr-status">— kHz</span></div>
-    <div class="chunk"><span class="lbl">Buf</span><span class="val">128</span></div>
-    <div class="chunk"><span class="lbl">Load</span><span class="val" id="load-status">—</span></div>
+    <div class="chunk buf"><span class="lbl">Buf</span><span class="val">128</span></div>
+    <div class="chunk load"><span class="lbl">Load</span><span class="val" id="load-status">—</span></div>
     <div class="chunk"><span class="lbl">Eng</span>
       <span class="val idle" id="engine-state"><span class="dot"></span>idle</span>
     </div>
@@ -279,6 +296,67 @@
     <div class="kbd">hot-swap <kbd>⌘↵</kbd></div>
   </footer>
 
+  <!-- ─────────────────────── MOBILE NAV (phones) ───────────────────────
+       Bottom segmented switcher between the two single-pane mobile views:
+       Code (the editor) and Panels (mixer + figure, stacked + scrollable).
+       Hidden on desktop — see the @media block in style.css. -->
+  <nav class="mobile-nav" id="mobile-nav">
+    <button class="mnav-btn on" data-mview="code" type="button">
+      <span class="glyph">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+          <path d="M6.5 5 L2.5 9 L6.5 13" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M11.5 5 L15.5 9 L11.5 13" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      Code
+    </button>
+    <button class="mnav-btn" data-mview="panels" type="button">
+      <span class="glyph">
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+          <line x1="4" y1="3.5" x2="4" y2="14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="9" y1="3.5" x2="9" y2="14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="14" y1="3.5" x2="14" y2="14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <circle cx="4" cy="6.5" r="1.6" fill="currentColor"/>
+          <circle cx="9" cy="11" r="1.6" fill="currentColor"/>
+          <circle cx="14" cy="7.5" r="1.6" fill="currentColor"/>
+        </svg>
+      </span>
+      Panels
+    </button>
+  </nav>
+
+</div>
+
+<!-- ─────────────────────── MOBILE OVERFLOW SHEET ───────────────────────
+     The phone home for the chrome controls that don't fit: theme, accent,
+     and the workspace doors (Learn / Ref / Share). Opened by the chrome
+     hamburger (#menu-btn); the scrim dismisses it. The accent dots carry the
+     same data-color values as the chrome dots, so bindAccentPicker wires them
+     automatically. Hidden on desktop — see the @media block in style.css. -->
+<div class="sheet-scrim" id="sheet-scrim"></div>
+<div class="sheet" id="sheet" role="dialog" aria-label="Menu">
+  <div class="sheet-grip"></div>
+  <div class="sheet-row">
+    <span class="sheet-lbl">Theme</span>
+    <div class="sheet-seg" id="sheet-theme">
+      <button class="on" data-theme="light" type="button">Light</button>
+      <button data-theme="dark" type="button">Dark</button>
+    </div>
+  </div>
+  <div class="sheet-row">
+    <span class="sheet-lbl">Accent</span>
+    <div class="sheet-accents">
+      <button class="accent-dot on" data-color="#ff551d" style="background:#ff551d" title="orange"></button>
+      <button class="accent-dot" data-color="#0a2bd6" style="background:#0a2bd6" title="cobalt"></button>
+      <button class="accent-dot" data-color="#6ea800" style="background:#6ea800" title="lime"></button>
+      <button class="accent-dot" data-color="#ff2a85" style="background:#ff2a85" title="hot pink"></button>
+    </div>
+  </div>
+  <div class="sheet-row sheet-acts">
+    <button class="sheet-act" data-act="learn" type="button">Learn</button>
+    <button class="sheet-act" data-act="ref" type="button">Ref</button>
+    <button class="sheet-act" data-act="share" type="button">Share</button>
+  </div>
 </div>
 
 <!-- Learn modal — overlay iframe of learn/index.html over the live playground.
@@ -298,7 +376,7 @@
       <button class="about-link" id="about-learn">Take the primer →</button>
       <button class="about-link" id="about-ref">Open the reference →</button>
     </div>
-    <p class="about-ack">fugue grew from one idea — combining Faust's DSP algebra with Tidal's patterns — and it stands on the shoulders of giants: SuperCollider, Strudel, Max/MSP &amp; Pure Data, and many more before them. Thank you.</p>
+    <p class="about-ack">fugue grew from one idea — combining Faust's DSP algebra with Tidal's patterns — and it stands on the shoulders of giants: SuperCollider, TidalCycles, Max/MSP &amp; Pure Data, and many more before them. Thank you.</p>
     <div class="about-credit">Made by <a href="https://nikhilbhanu.com" target="_blank" rel="noopener">Nikhil Bhanu</a>, aided &amp; abetted by Claude.</div>
     <div class="about-foot">handmade · audio is the language</div>
   </div>
