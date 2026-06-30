@@ -34,7 +34,7 @@ process ride(trig) {
 }
 process hat(trig) {
     tone = param.log(6kHz, 13kHz) 9kHz |> smooth(8ms)
-    out  = (noise(13) |> bpf(tone, 0.6) |> binaural(0.2, 0)) * adsr(1ms, 60ms, 0.0, 5ms, trig) * 0.13
+    out  = (noise(13) |> bpf(tone, 0.6) |> pan(0.2)) * adsr(1ms, 60ms, 0.0, 5ms, trig) * 0.13
 }
 
 // ── e-piano — the harmony: eight poly voices, swept lpf into a slow phaser ──
@@ -62,7 +62,7 @@ process lead(note, trig) {
     bend = sine(note * 2.0) * fm // FM shimmer, depth set from the score
     body = saw_naive(note + bend) |> ladder(cut, 0.72) |> tanh(1.4)
     az = phasor(0.1Hz) * 2 - 1
-    out  = (body |> binaural(az, -az)) * adsr(80ms, 200ms, sus, rel, trig) * 0.04
+    out  = (body |> binaural(az, -az)) * adsr(80ms, 200ms, sus, rel, trig) * 0.065
 }
 
 // ── space — the shared room (fdn8), sidechained by the kick like the bass ──
@@ -130,14 +130,8 @@ process cwo(in: audio) {
 -> rim
 
 "~ ~ 1 ~" -> snare
-
-"1*16"
-    |> degrade
--> hat
-
-"~ ~ 1 ~"
-    |> fast(4)
--> ride
+"1*16" |> degrade -> hat
+"~ ~ 1 ~" |> fast(4) -> ride
 
 // harmony
 "<Bbm9 [Cm9 Fm7]>? ~"
@@ -156,7 +150,6 @@ process cwo(in: audio) {
 "<[8 ~ 11 ~ 6 ~ 8 ~] [11 ~ 8 ~ 10 ~ 6 ~]> 0 1 4"
     |> scale("Bb:minor")
     |> every(2, fast(4))
-    |> chunk(4, jux(rev))
     |> every(3, octave(1))
     |> swing_by(4/100, 4)
 -> lead
@@ -166,7 +159,7 @@ process cwo(in: audio) {
 1200Hz + sweep*1000Hz -> lead.cut
 10Hz + drift*22Hz -> lead.fm
 phasor(0.05Hz) * 0.5 -> cwo.green
-lfo(0.02Hz) -> lead.sus
+lfo(0.05Hz) -> lead.sus
 "<8000 11000 9000 12000>" -> hat.tone
 "<0.1 -0.4 0.6 -0.3>" -> ride.az
 "<-0.1 0.2 -0.6 0.3>" -> epiano.az
@@ -188,7 +181,7 @@ rim |> pan(0.25) -> out
 snare -> out
 hat * hatfill -> out
 ride * ridefill -> out
-lead * "1 [1 ~]" -> out
+lead -> out
 bass -> out
 epiano -> out
 echo -> out

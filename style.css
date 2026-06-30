@@ -11,6 +11,17 @@
  * editor view theme itself is set by EditorView.theme in main.js.
  */
 
+/* ── Touch / hover policy ───────────────────────────────────────────────
+ * iOS (and any `hover: none` pointer) APPLIES :hover on the first tap and
+ * holds it until you tap elsewhere. A bare `:hover` therefore either (a) eats
+ * the first tap on delegated-handler controls (the "needs two taps" bug) or
+ * (b) leaves the last-tapped control stuck-highlighted (the "highlight that
+ * follows my finger around / shows up on other buttons" bug). CSS has no
+ * global off-switch for :hover, so the rule here is a convention: EVERY
+ * :hover style lives behind `@media (hover: hover)`. Touch pointers never
+ * match it and get the clean base style. Adding a hover rule? Gate it —
+ * `grep -n ':hover' style.css` should show no bare (unguarded) match. */
+
 :root {
     /* PAPER + INK — warm anthracite on cream. */
     --paper: #ece6d4;
@@ -211,10 +222,16 @@ body.zen .editor-head {
     pointer-events: none;
 }
 
-.wordmark:hover .about-cue,
 .about-cue.reveal {
     opacity: 1;
     transform: none;
+}
+
+@media (hover: hover) {
+    .wordmark:hover .about-cue {
+        opacity: 1;
+        transform: none;
+    }
 }
 
 body.zen .about-cue {
@@ -264,9 +281,11 @@ body.zen .wordmark .dot {
     transition: background 0.14s ease, color 0.14s ease;
 }
 
-.plate .pill:hover {
-    background: var(--signal);
-    color: var(--signal-ink);
+@media (hover: hover) {
+    .plate .pill:hover {
+        background: var(--signal);
+        color: var(--signal-ink);
+    }
 }
 
 /* cold — version not yet resolved: hollow pill so the em-dash placeholder
@@ -310,8 +329,10 @@ body.zen .cluster {
     transition: background 120ms ease, color 120ms ease;
 }
 
-.tbtn:hover {
-    background: rgba(20, 20, 20, 0.04);
+@media (hover: hover) {
+    .tbtn:hover {
+        background: rgba(20, 20, 20, 0.04);
+    }
 }
 
 .tbtn .glyph {
@@ -328,9 +349,11 @@ body.zen .cluster {
     border-right-color: var(--signal);
 }
 
-.tbtn.play.on:hover {
-    background: var(--signal);
-    filter: brightness(0.96);
+@media (hover: hover) {
+    .tbtn.play.on:hover {
+        background: var(--signal);
+        filter: brightness(0.96);
+    }
 }
 
 /* Idle pulse on the play button until the first start. */
@@ -359,8 +382,10 @@ body.zen .cluster {
     color: var(--rec);
 }
 
-.tbtn.rec:hover {
-    background: rgba(229, 52, 43, 0.08);
+@media (hover: hover) {
+    .tbtn.rec:hover {
+        background: rgba(229, 52, 43, 0.08);
+    }
 }
 
 /* Recording — the red dot breathes at a fixed ~1s. No bar, no fill flip:
@@ -433,8 +458,7 @@ body.zen .cluster {
     cursor: pointer;
 }
 
-/* Hover-capable only: the bounce-length buttons switch via a delegated handler
-   (#rec-menu), so on touch a bare `:hover` eats the first tap (see .fig-tab). */
+/* Hover-capable only (see the touch / hover policy note at the top). */
 @media (hover: hover) {
     .rec-menu button:hover {
         background: rgba(229, 52, 43, 0.10);
@@ -469,9 +493,11 @@ body.zen .cluster {
     background: var(--paper);
 }
 
-.theme-toggle button:not(.on):hover {
-    color: var(--ink-2);
-    background: rgba(20, 20, 20, 0.03);
+@media (hover: hover) {
+    .theme-toggle button:not(.on):hover {
+        color: var(--ink-2);
+        background: rgba(20, 20, 20, 0.03);
+    }
 }
 
 .accents {
@@ -493,8 +519,10 @@ body.zen .cluster {
     transition: transform 120ms ease;
 }
 
-.accent-dot:hover {
-    transform: scale(1.15);
+@media (hover: hover) {
+    .accent-dot:hover {
+        transform: scale(1.15);
+    }
 }
 
 .accent-dot.on {
@@ -520,9 +548,11 @@ body.zen .cluster {
     transition: background 120ms ease, color 120ms ease;
 }
 
-.zen-btn:hover {
-    background: rgba(20, 20, 20, 0.04);
-    color: var(--signal);
+@media (hover: hover) {
+    .zen-btn:hover {
+        background: rgba(20, 20, 20, 0.04);
+        color: var(--signal);
+    }
 }
 
 .zen-btn .glyph {
@@ -576,9 +606,11 @@ body.zen .zen-btn {
     transition: background 120ms ease, color 120ms ease;
 }
 
-.cheat-btn:hover {
-    background: rgba(20, 20, 20, 0.04);
-    color: var(--signal);
+@media (hover: hover) {
+    .cheat-btn:hover {
+        background: rgba(20, 20, 20, 0.04);
+        color: var(--signal);
+    }
 }
 
 .cheat-btn .glyph {
@@ -651,8 +683,10 @@ body.zen .cheat-btn {
     transition: color 120ms ease, background 120ms ease;
 }
 
-.cheat-copyall:hover {
-    color: var(--signal);
+@media (hover: hover) {
+    .cheat-copyall:hover {
+        color: var(--signal);
+    }
 }
 
 .cheat-copyall .ico-done {
@@ -691,8 +725,10 @@ body.zen .cheat-btn {
     transition: color 120ms ease;
 }
 
-.cheat-close:hover {
-    color: var(--ink);
+@media (hover: hover) {
+    .cheat-close:hover {
+        color: var(--ink);
+    }
 }
 
 .cheat-body {
@@ -848,8 +884,7 @@ body.zen .cheat-btn {
     transition: background 120ms ease, color 120ms ease;
 }
 
-/* Hover-capable only: the copy chips are `<code>` (not buttons) with a delegated
-   handler (.cheat-body), so on touch a bare `:hover` eats the first tap. */
+/* Hover-capable only (see the touch / hover policy note at the top). */
 @media (hover: hover) {
     .cheat-body code.cs-copy:hover {
         background: var(--signal);
@@ -900,8 +935,10 @@ body.zen .cheat-btn {
     color: var(--ink-4);
 }
 
-.file-tab:hover {
-    color: var(--ink-2);
+@media (hover: hover) {
+    .file-tab:hover {
+        color: var(--ink-2);
+    }
 }
 
 .file-tab.active {
@@ -950,14 +987,19 @@ body.zen .cheat-btn {
     transition: opacity .12s, color .12s, background .12s;
 }
 
-.file-tab:hover .close,
 .file-tab.active .close {
     opacity: 1;
 }
 
-.file-tab .close:hover {
-    color: var(--signal);
-    background: var(--surface-2);
+@media (hover: hover) {
+    .file-tab:hover .close {
+        opacity: 1;
+    }
+
+    .file-tab .close:hover {
+        color: var(--signal);
+        background: var(--surface-2);
+    }
 }
 
 .tab-add {
@@ -972,8 +1014,10 @@ body.zen .cheat-btn {
     line-height: 1;
 }
 
-.tab-add:hover {
-    color: var(--ink-2);
+@media (hover: hover) {
+    .tab-add:hover {
+        color: var(--ink-2);
+    }
 }
 
 /* ── Main grid ──────────────────────────────────────────────────────── */
@@ -1165,8 +1209,10 @@ body.zen .panels-col {
     transition: color 120ms ease;
 }
 
-.boot-error-collapse:hover {
-    color: var(--ink);
+@media (hover: hover) {
+    .boot-error-collapse:hover {
+        color: var(--ink);
+    }
 }
 
 .boot-error-head {
@@ -1234,9 +1280,14 @@ body.zen .panels-col {
     transition: border-color 120ms ease;
 }
 
-.cm-param-knob:hover .ring,
 .cm-param-knob.dragging .ring {
     border-color: var(--ink-3);
+}
+
+@media (hover: hover) {
+    .cm-param-knob:hover .ring {
+        border-color: var(--ink-3);
+    }
 }
 
 .cm-param-knob .ind {
@@ -1361,8 +1412,10 @@ body.zen .panels-col {
     border-bottom: none;
 }
 
-.channel-strip:hover {
-    background: rgba(255, 85, 29, 0.04);
+@media (hover: hover) {
+    .channel-strip:hover {
+        background: rgba(255, 85, 29, 0.04);
+    }
 }
 
 .channel-strip .idx {
@@ -1413,9 +1466,14 @@ body.zen .panels-col {
     transition: border-color 120ms ease;
 }
 
-.gain-slider:hover .track,
 .gain-slider.dragging .track {
     border-color: var(--ink-3);
+}
+
+@media (hover: hover) {
+    .gain-slider:hover .track {
+        border-color: var(--ink-3);
+    }
 }
 
 .gain-slider .rms {
@@ -1478,8 +1536,10 @@ body.zen .panels-col {
     border-radius: 0;
 }
 
-.ms-buttons button:hover {
-    background: var(--surface-2);
+@media (hover: hover) {
+    .ms-buttons button:hover {
+        background: var(--surface-2);
+    }
 }
 
 .ms-buttons button.on.mute {
@@ -1601,11 +1661,7 @@ body.zen .panels-col {
     position: relative;
 }
 
-/* Guard the hover tint behind hover-capable pointers. The fig tabs switch via a
-   delegated click handler (#fig-tabs), so iOS doesn't mark each button first-tap
-   clickable; a bare `:hover` then makes the first tap *show the hover* and only
-   switch on the second/third — the same two-tap bug fixed for the file tabs. On
-   touch (hover: none) the rule simply doesn't apply, so the first tap switches. */
+/* Hover-capable only (see the touch / hover policy note at the top). */
 @media (hover: hover) {
     .fig-tab:hover {
         color: var(--ink-2);
@@ -1676,8 +1732,10 @@ body.zen .panels-col {
     margin-left: 1px;
 }
 
-.ctl:hover .cv {
-    color: var(--signal);
+@media (hover: hover) {
+    .ctl:hover .cv {
+        color: var(--signal);
+    }
 }
 
 .hold-btn {
@@ -1705,8 +1763,10 @@ body.zen .panels-col {
     border: 1px solid var(--ink);
 }
 
-.hold-btn:hover {
-    color: var(--ink-2);
+@media (hover: hover) {
+    .hold-btn:hover {
+        color: var(--ink-2);
+    }
 }
 
 .hold-btn.on {
@@ -1939,8 +1999,10 @@ body.theme-dark .status {
     transition: color 120ms ease;
 }
 
-.status .log-action:hover {
-    color: var(--status-fg);
+@media (hover: hover) {
+    .status .log-action:hover {
+        color: var(--status-fg);
+    }
 }
 
 .status .log-action svg {
@@ -2006,8 +2068,10 @@ body.theme-dark .status {
    clickable" cue. (Can't lean on --signal-soft here: like --ink-4 it flips
    to a near-black brown in dark mode, but the status bar is dark in *both*
    themes, so the bar sticks to --status-fg / --ink-3 / --signal only.) */
-.status .midi-toggle:hover:not(:disabled) .val {
-    color: var(--status-fg);
+@media (hover: hover) {
+    .status .midi-toggle:hover:not(:disabled) .val {
+        color: var(--status-fg);
+    }
 }
 
 /* off — not yet enabled: dim value + grey dot, like Eng when idle */
@@ -2080,8 +2144,10 @@ body.theme-dark .status {
     cursor: pointer;
 }
 
-.status .midi-target .sel:hover {
-    border-color: var(--signal);
+@media (hover: hover) {
+    .status .midi-target .sel:hover {
+        border-color: var(--signal);
+    }
 }
 
 /* ▾ caret painted in the live accent via a mask, so it tracks both the theme
@@ -2174,8 +2240,10 @@ body.theme-dark .status {
     transition: color 120ms ease;
 }
 
-.about-close:hover {
-    color: var(--signal);
+@media (hover: hover) {
+    .about-close:hover {
+        color: var(--signal);
+    }
 }
 
 .about-mark {
@@ -2243,8 +2311,10 @@ body.theme-dark .status {
     transition: color 120ms ease;
 }
 
-.about-link:hover {
-    color: var(--signal-deep);
+@media (hover: hover) {
+    .about-link:hover {
+        color: var(--signal-deep);
+    }
 }
 
 .about-ack {
@@ -2270,9 +2340,11 @@ body.theme-dark .status {
     transition: color 120ms ease;
 }
 
-.about-credit a:hover {
-    color: var(--signal-deep);
-    text-decoration: underline;
+@media (hover: hover) {
+    .about-credit a:hover {
+        color: var(--signal-deep);
+        text-decoration: underline;
+    }
 }
 
 .about-foot {
@@ -2313,10 +2385,9 @@ body.theme-dark .status {
         grid-template-rows: var(--chrome-h) var(--tabs-h) minmax(0, 1fr) var(--status-h) auto;
     }
 
-    /* Touch has no hover. A hover-revealed close button makes iOS apply :hover
-       on the first tap and only fire the click on the *second* (the "needs two
-       taps to switch tabs" bug). Show the close persistently so the first tap
-       registers as a real click. */
+    /* Touch can't hover to reveal the per-tab ✕ (that hover rule is now gated —
+       see the hover policy note), so show it on every tab and closing any tab
+       stays reachable. The active tab already shows it via `.file-tab.active`. */
     .file-tab .close {
         opacity: 1;
     }
@@ -2362,8 +2433,10 @@ body.theme-dark .status {
         cursor: pointer;
     }
 
-    .menu-btn:hover {
-        background: rgba(20, 20, 20, 0.04);
+    @media (hover: hover) {
+        .menu-btn:hover {
+            background: rgba(20, 20, 20, 0.04);
+        }
     }
 
     /* ── Main: single switched pane ─────────────────────────────────── */
